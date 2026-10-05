@@ -14,7 +14,9 @@ Internally resamples M1 -> M5 and runs:
 - 24/5 (dataset itself defines trading availability)
 
 Outputs:
-results/trend_pullback_trades.csv
+results/trend_pullback_trades.csv (complete local copy)
+results/trend_pullback_trades_part_001.csv, ... (5,000 trades per file for upload/analysis)
+results/trend_pullback_trades_manifest.json
 results/trend_pullback_summary.json
 results/trend_pullback_equity.csv
 """
@@ -28,6 +30,9 @@ ROOT = Path(__file__).resolve().parents[1]
 INPUT = ROOT / "data" / "raw" / "XAUUSD_m1_20211001_20261001.csv"
 RESULTS = ROOT / "results"
 TRADES_OUT = RESULTS / "trend_pullback_trades.csv"
+TRADES_PART_PREFIX = "trend_pullback_trades_part_"
+TRADES_PART_ROWS = 5000
+TRADES_MANIFEST_OUT = RESULTS / "trend_pullback_trades_manifest.json"
 SUMMARY_OUT = RESULTS / "trend_pullback_summary.json"
 EQUITY_OUT = RESULTS / "trend_pullback_equity.csv"
 
@@ -291,7 +296,31 @@ def main():
             "sl_count": int((trades.exit_reason == "SL").sum()),
             "end_of_data_count": int((trades.exit_reason == "END_OF_DATA").sum()),
         }
+        # Keep the complete CSV locally, but also split trades into small CSV parts.
+        # The parts are the files intended for upload/analysis through GitHub.
         trades.to_csv(TRADES_OUT, index=False)
+        part_files = []
+        for part_no, start in enumerate(range(0, len(trades), TRADES_PART_ROWS), start=1):
+            part = trades.iloc[start:start + TRADES_PART_ROWS]
+            part_name = f"{TRADES_PART_PREFIX}{part_no:03d}.csv"
+            part_path = RESULTS / part_name
+            part.to_csv(part_path, index=False)
+            part_files.append({
+                "file": part_name,
+                "rows": int(len(part)),
+                "first_trade_index": int(start),
+                "last_trade_index": int(start + len(part) - 1),
+            })
+
+        TRADES_MANIFEST_OUT.write_text(
+            json.dumps({
+                "source": "trend_pullback_trades.csv",
+                "part_rows_limit": TRADES_PART_ROWS,
+                "parts": part_files,
+                "total_rows": int(len(trades)),
+            }, indent=2),
+            encoding="utf-8",
+        )
         equity.to_csv(EQUITY_OUT, index=False)
     else:
         summary = {
