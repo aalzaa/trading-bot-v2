@@ -42,16 +42,18 @@ def load_m1():
     return df.dropna(subset=["Open", "High", "Low", "Close"])
 
 
-def load_entries():
+def load_entries(start, end):
     e = pd.read_csv(ENTRIES)
     e["entry_time"] = pd.to_datetime(e["entry_time"])
+    e = e[(e["entry_time"] >= start) & (e["entry_time"] <= end)]
     return e.sort_values("entry_time").reset_index(drop=True)
 
 
-def load_baseline_trades():
+def load_baseline_trades(start, end):
     t = pd.read_csv(BASE_TRADES)
     t["entry_time"] = pd.to_datetime(t["entry_time"])
     t["exit_time"] = pd.to_datetime(t["exit_time"])
+    t = t[(t["entry_time"] >= start) & (t["entry_time"] <= end)]
     return t.sort_values("entry_time").reset_index(drop=True)
 
 
@@ -70,7 +72,7 @@ def first_exit(m1, entry, sl_mult, tp_mult):
         sl = price + risk
         tp = price - atr * tp_mult
 
-    after = m1.loc[m1.index > entry.entry_time]
+    start_pos = m1.index.searchsorted(entry.entry_time, side="right")\n    after = m1.iloc[start_pos:]
     for ts, bar in after.iterrows():
         hit_sl = bar.Low <= sl if side == "LONG" else bar.High >= sl
         hit_tp = bar.High >= tp if side == "LONG" else bar.Low <= tp
@@ -238,7 +240,7 @@ def main():
     report = {
         "status": "PASS",
         "entries_used": int(len(entries)),
-        "m1_rows": int(len(m1)),
+        "m1_rows": int(len(m1)),\n        "period_start": str(period_start),\n        "period_end": str(period_end),
         "exit_sweep_rows": int(len(sweep)),
         "best_exit_by_pf": sweep.iloc[0].to_dict(),
         "mfe_mean_r": float(mae.mfe_r_at_1atr.mean()),
