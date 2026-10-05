@@ -1,0 +1,126 @@
+{
+  "file": "data\\raw\\XAUUSD_m1_20211001_20261001.csv",
+  "status": "PASS",
+  "errors": [],
+  "warnings": [],
+  "schema": {
+    "columns": [
+      "Date",
+      "Open",
+      "High",
+      "Low",
+      "Close",
+      "Volume"
+    ],
+    "missing_required": [],
+    "extra_columns": []
+  },
+  "rows": 1772270,
+  "parse": {
+    "invalid_dates": 0,
+    "duplicate_rows": 0,
+    "duplicate_timestamps": 0,
+    "non_monotonic_timestamps": 0
+  },
+  "numeric": {
+    "invalid_numeric_cells": 0,
+    "missing_values_by_column": {
+      "Open": 0,
+      "High": 0,
+      "Low": 0,
+      "Close": 0,
+      "Volume": 0
+    }
+  },
+  "ohlc_integrity": {
+    "high_below_required_value_count": 0,
+    "low_above_required_value_count": 0,
+    "non_positive_price_rows": 0,
+    "negative_volume_rows": 0,
+    "zero_volume_rows": 0
+  },
+  "coverage": {
+    "first_timestamp": "2021-09-30 22:00:00",
+    "last_timestamp": "2026-09-30 22:00:00",
+    "calendar_days": 1827,
+    "unique_dates": 1556,
+    "unique_months": 61,
+    "unique_years": 6,
+    "min_bar_gap_minutes": 1.0,
+    "median_bar_gap_minutes": 1.0,
+    "max_bar_gap_minutes": 4382.0,
+    "gaps_gt_1m": 1652,
+    "largest_gap_minutes": 4382.0,
+    "backward_time_jumps": 0
+  },
+  "daily_bar_stats": {
+    "days": 1556,
+    "min_bars_per_day": 28,
+    "median_bars_per_day": 1380.0,
+    "mean_bars_per_day": 1138.991002570694,
+    "max_bars_per_day": 1380
+  },
+  "monthly_bar_stats": {
+    "min_bars": 120,
+    "median_bars": 29100.0,
+    "max_bars": 31799,
+    "months_below_1000_bars": 1
+  },
+  "market_stats": {
+    "price_min": 1614.71,
+    "price_max": 5596.805,
+    "median_close": 2271.01,
+    "median_m1_range": 0.6200000000003456,
+    "mean_m1_range": 1.0534327122842453,
+    "median_body": 0.2800000000002001,
+    "mean_body": 0.5650877902351219,
+    "median_volume": 0.02376,
+    "mean_volume": 0.03299633495460624,
+    "return_mean_pct": 5.3613808047439524e-05,
+    "return_std_pct": 0.03149182227310959
+  },
+  "outliers": {
+    "extreme_range_count_robust_z_gt_10": 23943,
+    "volume_gt_20x_median_count": 79,
+    "largest_range": 134.1199999999999,
+    "largest_range_timestamp": "2026-01-29 15:27:00",
+    "largest_volume": 2.71157,
+    "largest_volume_timestamp": "2022-09-13 12:35:00"
+  },
+  "time_profile": {
+    "bars_by_weekday": {
+      "Tuesday": 359485,
+      "Wednesday": 356827,
+      "Thursday": 354265,
+      "Monday": 351130,
+      "Friday": 324964,
+      "Sunday": 25599
+    },
+    "bars_by_hour": {
+      "0": 77387,
+      "1": 77400,
+      "2": 77400,
+      "3": 77397,
+      "4": 77389,
+      "5": 77394,
+      "6": 77400,
+      "7": 77400,
+      "8": 77386,
+      "9": 77398,
+      "10": 77399,
+      "11": 77398,
+      "12": 77400,
+      "13": 77394,
+      "14": 77374,
+      "15": 77345,
+      "16": 77341,
+      "17": 77186,
+      "18": 76352,
+      "19": 75285,
+      "20": 74833,
+      "21": 25094,
+      "22": 50769,
+      "23": 77149
+    }
+  }
+}
