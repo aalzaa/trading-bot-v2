@@ -11,7 +11,7 @@ Internally resamples M1 -> M5 and runs:
 - SL = 1.0 ATR
 - TP = 1.5 ATR
 - one position at a time
-- 24/5 (dataset itself defines trading availability)
+- latest available 1-year window (dataset itself defines trading availability)
 
 Outputs:
 results/trend_pullback_trades.csv (complete local copy)
@@ -51,7 +51,12 @@ def load_m1():
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.set_index("Date").sort_index()
     df = df[~df.index.duplicated(keep="first")]
-    df = df.loc["2021-10-01":"2026-10-01"]
+    # Use only the latest one-year window available in the master dataset.
+    # The end is derived from the actual last timestamp so the test stays current
+    # if the dataset is extended later.
+    end = df.index.max()
+    start = end - pd.DateOffset(years=1)
+    df = df.loc[start:end]
     for c in ["Open", "High", "Low", "Close", "Volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df = df.dropna(subset=["Open", "High", "Low", "Close"])
