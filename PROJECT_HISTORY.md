@@ -174,3 +174,17 @@ TREND + PULLBACK — BASELINE
 Status: Research baseline / pending first numerical backtest.
 
 XAUUSD | M1 master | M5 strategy | EMA20/50 | 3-bar pullback | engulfing/rejection | ATR14 | SL 1.0 ATR | TP 1.5 ATR | 24/5 | one position | no additional filters
+## 2026-10-05 — Research protocol: fixed-entry exit/MFE-MAE/time/regime studies
+
+After the baseline result, the next research sequence was defined:
+1. Exit optimization using the exact same baseline entry timestamps.
+2. MFE/MAE analysis from the M1 master dataset, including time to MFE and time to MAE.
+3. Hour/time filters, with particular attention to the 12:00 hour.
+4. Regime analysis by year and month.
+
+research/backtest_trend_pullback.py was updated to export trend_pullback_entries.csv, a fixed baseline entry ledger.
+research/strategy_research.py was added. It evaluates exit variants from the fixed entry ledger and does not regenerate strategy signals. It also produces MFE/MAE and time/regime reports.
+
+The exit sweep is deliberately performed before selecting a time filter. Research outputs remain separate from the final MT5 LIVE code.
+
+Status: TESTS PREPARED — numerical results pending local execution against the master M1 dataset.
