@@ -36,6 +36,8 @@ TRADES_MANIFEST_OUT = RESULTS / "trend_pullback_trades_manifest.json"
 SUMMARY_OUT = RESULTS / "trend_pullback_summary.json"
 EQUITY_OUT = RESULTS / "trend_pullback_equity.csv"
 
+ENTRIES_OUT = RESULTS / "trend_pullback_entries.csv"
+
 FAST = 20
 SLOW = 50
 PULLBACK_LOOKBACK = 3
@@ -138,6 +140,7 @@ def bearish_pattern(bar, prev):
 
 def backtest(df):
     trades = []
+    entries = []
     equity = 0.0
     equity_curve = []
     position = None
@@ -214,6 +217,7 @@ def backtest(df):
                 "atr": row.ATR14,
                 "entry_i": i,
             }
+            entries.append({**position})
         elif short_side and bearish_pattern(row, prev):
             entry = row.Close
             sl = entry + row.ATR14 * SL_ATR
@@ -227,6 +231,7 @@ def backtest(df):
                 "atr": row.ATR14,
                 "entry_i": i,
             }
+            entries.append({**position})
 
     # Close an unfinished position at final available close, flagged separately.
     if position is not None:
@@ -247,14 +252,14 @@ def backtest(df):
         equity += result_r
         equity_curve.append({"Date": df.index[final_i], "EquityR": equity})
 
-    return pd.DataFrame(trades), pd.DataFrame(equity_curve)
+    return pd.DataFrame(trades), pd.DataFrame(equity_curve), pd.DataFrame(entries)
 
 
 def main():
     RESULTS.mkdir(exist_ok=True)
     m1 = load_m1()
     m5 = add_indicators(make_m5(m1))
-    trades, equity = backtest(m5)
+    trades, equity, entries = backtest(m5)
 
     if not trades.empty:
         trades["entry_time"] = pd.to_datetime(trades["entry_time"])
@@ -322,6 +327,7 @@ def main():
             encoding="utf-8",
         )
         equity.to_csv(EQUITY_OUT, index=False)
+        entries.to_csv(ENTRIES_OUT, index=False)
     else:
         summary = {
             "status": "PASS_NO_TRADES",
