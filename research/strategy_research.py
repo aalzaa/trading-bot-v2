@@ -72,7 +72,8 @@ def first_exit(m1, entry, sl_mult, tp_mult):
         sl = price + risk
         tp = price - atr * tp_mult
 
-    start_pos = m1.index.searchsorted(entry.entry_time, side="right")\n    after = m1.iloc[start_pos:]
+    start_pos = m1.index.searchsorted(entry.entry_time, side="right")
+    after = m1.iloc[start_pos:]
     for ts, bar in after.iterrows():
         hit_sl = bar.Low <= sl if side == "LONG" else bar.High >= sl
         hit_tp = bar.High >= tp if side == "LONG" else bar.Low <= tp
@@ -91,7 +92,8 @@ def first_exit(m1, entry, sl_mult, tp_mult):
 def mfe_mae(m1, entry):
     side = entry.side
     price = float(entry.entry)
-    after = m1.loc[m1.index > entry.entry_time]
+    start_pos = m1.index.searchsorted(entry.entry_time, side="right")
+    after = m1.iloc[start_pos:]
     if after.empty:
         return None
 
