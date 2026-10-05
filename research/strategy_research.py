@@ -33,7 +33,10 @@ def load_m1():
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.set_index("Date").sort_index()
     df = df[~df.index.duplicated(keep="first")]
-    df = df.loc["2021-10-01":"2026-10-01"]
+    # Use only the latest one-year window available in the master dataset.
+    end = df.index.max()
+    start = end - pd.DateOffset(years=1)
+    df = df.loc[start:end]
     for c in ["Open", "High", "Low", "Close", "Volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df.dropna(subset=["Open", "High", "Low", "Close"])
