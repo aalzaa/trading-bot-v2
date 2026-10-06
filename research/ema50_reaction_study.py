@@ -143,16 +143,7 @@ def pattern_info(m5, ts, side):
         "ema50_setup": bool(pattern != "NONE" and touches and body_holds),
         "body_breaks_ema50": bool(body_breaks),
         "ema20": ema20,
-        "ema20": ema20,
         "ema50": ema50,
-        "distance_ema20": float(bar.Close - ema20),
-        "distance_ema50": float(bar.Close - ema50),
-        "distance_ema20_atr": float((bar.Close - ema20) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
-        "distance_ema50_atr": float((bar.Close - ema50) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
-        "abs_distance_ema20": float(abs(bar.Close - ema20)),
-        "abs_distance_ema50": float(abs(bar.Close - ema50)),
-        "abs_distance_ema20_atr": float(abs(bar.Close - ema20) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
-        "abs_distance_ema50_atr": float(abs(bar.Close - ema50) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
         "distance_ema20": float(bar.Close - ema20),
         "distance_ema50": float(bar.Close - ema50),
         "distance_ema20_atr": float((bar.Close - ema20) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
@@ -303,6 +294,19 @@ def main():
     grouped("ema50_reaction_by_hour.csv", ["buffer_atr", "rr", "entry_hour"])
     grouped("ema50_reaction_by_pattern.csv", ["buffer_atr", "rr", "pattern"])
     grouped("ema50_reaction_by_side.csv", ["buffer_atr", "rr", "side"])
+
+    if not detail.empty:
+        detail["ema20_dist_bucket"] = pd.cut(
+            detail["abs_distance_ema20_atr"],
+            bins=[-float("inf"), 0.25, 0.50, 0.75, 1.00, 1.50, float("inf")],
+            labels=["<=0.25", "0.25-0.50", "0.50-0.75", "0.75-1.00", "1.00-1.50", ">1.50"],
+        )
+        detail["ema50_dist_bucket"] = pd.cut(
+            detail["abs_distance_ema50_atr"],
+            bins=[-float("inf"), 0.10, 0.20, 0.30, 0.50, 0.75, float("inf")],
+            labels=["<=0.10", "0.10-0.20", "0.20-0.30", "0.30-0.50", "0.50-0.75", ">0.75"],
+        )
+        grouped("ema50_reaction_by_distance.csv", ["buffer_atr", "rr", "ema20_dist_bucket", "ema50_dist_bucket"])
 
     news_rows = []
     if not detail.empty:
