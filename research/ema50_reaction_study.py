@@ -46,9 +46,9 @@ def load_m1():
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.set_index("Date").sort_index()
     df = df[~df.index.duplicated(keep="first")]
-    end = df.index.max()
-    start = end - pd.DateOffset(years=1)
-    df = df.loc[start:end]
+    test_start = pd.Timestamp("2023-09-30 00:00:00")
+    test_end = pd.Timestamp("2026-09-30 23:59:59")
+    df = df.loc[test_start:test_end]
     for c in ["Open", "High", "Low", "Close", "Volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df.dropna(subset=["Open", "High", "Low", "Close"])
@@ -116,6 +116,7 @@ def pattern_info(m5, ts, side):
 
     bar = m5.iloc[i]
     prev = m5.iloc[i - 1]
+    ema20 = float(bar.EMA20)
     ema50 = float(bar.EMA50)
     rng = float(bar.High - bar.Low)
     body = abs(float(bar.Close - bar.Open))
@@ -140,7 +141,16 @@ def pattern_info(m5, ts, side):
         "pattern": pattern,
         "ema50_setup": bool(pattern != "NONE" and touches and body_holds),
         "body_breaks_ema50": bool(body_breaks),
+        "ema20": ema20,
         "ema50": ema50,
+        "distance_ema20": float(bar.Close - ema20),
+        "distance_ema50": float(bar.Close - ema50),
+        "distance_ema20_atr": float((bar.Close - ema20) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
+        "distance_ema50_atr": float((bar.Close - ema50) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
+        "abs_distance_ema20": float(abs(bar.Close - ema20)),
+        "abs_distance_ema50": float(abs(bar.Close - ema50)),
+        "abs_distance_ema20_atr": float(abs(bar.Close - ema20) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
+        "abs_distance_ema50_atr": float(abs(bar.Close - ema50) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
         "signal_open": float(bar.Open),
         "signal_close": float(bar.Close),
         "signal_high": float(bar.High),
@@ -299,6 +309,7 @@ def main():
     report = {
         "status": "PASS",
         "all_baseline_entries": len(context),
+        "distance_tracking": "For every EMA50 reaction entry, both EMA20 and EMA50 distance are recorded in price units and ATR-normalized units, signed and absolute.",
         "ema50_reaction_entries": len(eligible),
         "buffer_atr_grid": BUFFER_ATR_GRID,
         "rr_grid": RR_GRID,
