@@ -198,3 +198,26 @@ Status: TESTS PREPARED — numerical results pending local execution against the
 - Baseline trend-pullback backtest now uses the same combined 3-year window rather than a single rolling year.
 - Trade CSV output remains split into 5,000-trade parts for manageable upload/analysis, with a manifest.
 - Research-only changes do not modify the MT5 LIVE EA.
+
+
+## 2026-10-06 — Research branch: engulfing-only + ATR/RR + RSI capture
+
+Created branch: engulfing-atr-rsi-research.
+
+The EMA50-stop version is REJECTED and is not carried forward.
+
+New research rules:
+- Entry confirmation is Engulfing only: bullish engulfing for LONG, bearish engulfing for SHORT.
+- Rejection patterns are excluded.
+- An engulfing candle reacting at EMA50 remains valid when its candle BODY does not cross EMA50; EMA50 is not used as the stop level.
+- Exits return to ATR-based stop/target research.
+- Multiple SL-ATR values and RR values are tested from the exact same entry set.
+- LONG/SHORT is recorded for every trade.
+- Exact entry timestamp, hour, minute and session are recorded for later session analysis.
+- EMA20 and EMA50 distances are recorded in price and ATR-normalized form, signed and absolute.
+- RSI14 is recorded for every trade; no RSI threshold/filter is applied yet.
+- Historical news context is recorded when a real data/news/xauusd_news.csv dataset is available; no news event is invented when unavailable.
+- MFE/MAE are corrected to use a finite window ending at each trade's baseline exit, instead of scanning to the end of the M1 dataset.
+
+Research output is separate from the MT5 LIVE bot.
+Status: NEW RESEARCH VERSION — pending local execution and analysis.
