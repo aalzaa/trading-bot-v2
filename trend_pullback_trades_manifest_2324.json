@@ -1,0 +1,13 @@
+{
+  "source": "trend_pullback_trades.csv",
+  "part_rows_limit": 5000,
+  "parts": [
+    {
+      "file": "trend_pullback_trades_part_001.csv",
+      "rows": 3635,
+      "first_trade_index": 0,
+      "last_trade_index": 3634
+    }
+  ],
+  "total_rows": 3635
+}
