@@ -33,9 +33,9 @@ def load_m1():
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.set_index("Date").sort_index()
     df = df[~df.index.duplicated(keep="first")]
-    # Use only the latest one-year window available in the master dataset.
-    end = df.index.max()
-    start = end - pd.DateOffset(years=1)
+    # Fixed combined 3-year study window.
+    start = pd.Timestamp("2023-09-30 00:00:00")
+    end = pd.Timestamp("2026-09-30 23:59:59")
     df = df.loc[start:end]
     for c in ["Open", "High", "Low", "Close", "Volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -232,8 +232,10 @@ def time_study(trades):
 
 def main():
     m1 = load_m1()
-    entries = load_entries()
-    trades = load_baseline_trades()
+    start = pd.Timestamp("2023-09-30 00:00:00")
+    end = pd.Timestamp("2026-09-30 23:59:59")
+    entries = load_entries(start, end)
+    trades = load_baseline_trades(start, end)
 
     sweep = exit_sweep(m1, entries)
     mae = mae_mfe_study(m1, entries)
