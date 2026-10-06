@@ -1,0 +1,29 @@
+{
+  "status": "PASS",
+  "data": "data\\raw\\XAUUSD_m1_20211001_20261001.csv",
+  "m1_rows": 1063252,
+  "m5_bars": 212698,
+  "period_start": "2023-10-01 22:00:00",
+  "period_end": "2026-09-30 22:00:00",
+  "parameters": {
+    "ema_fast": 20,
+    "ema_slow": 50,
+    "pullback_lookback_m5": 3,
+    "atr_period": 14,
+    "sl_atr": 1.0,
+    "tp_atr": 1.5,
+    "entry": "confirmation_candle_close"
+  },
+  "trades": 10885,
+  "wins": 4332,
+  "losses": 6553,
+  "win_rate_pct": 39.79788700045935,
+  "total_r": -55.0,
+  "avg_r": -0.005052824988516307,
+  "profit_factor": 0.9916068976041508,
+  "max_drawdown_r": 170.0,
+  "avg_duration_m5": 5.049609554432705,
+  "tp_count": 4332,
+  "sl_count": 6553,
+  "end_of_data_count": 0
+}

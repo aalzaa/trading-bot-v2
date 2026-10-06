@@ -1,0 +1,55 @@
+{
+  "status": "PASS",
+  "all_baseline_entries": 10885,
+  "distance_tracking": "For every EMA50 reaction entry, both EMA20 and EMA50 distance are recorded in price units and ATR-normalized units, signed and absolute.",
+  "ema50_reaction_entries": 1853,
+  "buffer_atr_grid": [
+    0.1,
+    0.2,
+    0.3,
+    0.5
+  ],
+  "rr_grid": [
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    2.0,
+    2.5,
+    3.0
+  ],
+  "rule": "EMA50 touch + valid candlestick reaction + body remains on trend side of EMA50; wick may cross.",
+  "sl_rule": "EMA50 plus/minus ATR buffer, beyond EMA50 to give the trade breathing room.",
+  "time_tracking": "Exact entry timestamp, hour, minute and session retained for every eligible trade.",
+  "news_data_available": false,
+  "news_file": "C:\\Users\\Admin\\Downloads\\trading-bot-v2-trend-pullback-mt5\\data\\news\\xauusd_news.csv",
+  "notes": [
+    "Original entry timestamps are preserved; this is a controlled exit/setup study.",
+    "Only the requested EMA50 reaction subset is tested in the EMA50-specific results.",
+    "SL/TP variants are independent and may overlap later baseline entries.",
+    "Historical news is only tagged when a real news CSV is provided; no events are guessed.",
+    "Research only; not part of the final MT5 LIVE bot."
+  ],
+  "best_by_profit_factor": {
+    "trades": 1853.0,
+    "wins": 380.0,
+    "losses": 1473.0,
+    "win_rate_pct": 20.50728548300054,
+    "total_r": -333.0,
+    "avg_r": -0.1797085806799784,
+    "profit_factor": 0.7739307535641547,
+    "buffer_atr": 0.5,
+    "rr": 3.0
+  },
+  "best_by_total_r": {
+    "trades": 1853.0,
+    "wins": 765.0,
+    "losses": 1088.0,
+    "win_rate_pct": 41.28440366972477,
+    "total_r": -323.0,
+    "avg_r": -0.1743119266055046,
+    "profit_factor": 0.703125,
+    "buffer_atr": 0.5,
+    "rr": 1.0
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "status": "PASS",
+  "entries_used": 10885,
+  "m1_rows": 1063252,
+  "period_start": "2023-10-01 22:00:00",
+  "period_end": "2026-09-30 22:00:00",
+  "exit_sweep_rows": 42,
+  "best_exit_by_pf": {
+    "trades": 10885.0,
+    "wins": 4846.0,
+    "losses": 6039.0,
+    "win_rate_pct": 44.519981626090946,
+    "total_r": 18.772171253822542,
+    "avg_r": 0.0017245908363640369,
+    "profit_factor": 1.0031086301264418,
+    "sl_atr": 2.0,
+    "tp_atr": 2.5,
+    "rr": 1.25
+  },
+  "mfe_mean_r": 885.9756284814736,
+  "mae_mean_r": 697.2161847583294,
+  "mfe_median_r": 115.7183066621258,
+  "mae_median_r": 78.90368221492649,
+  "notes": [
+    "Exit sweep uses the exact baseline entry timestamps from trend_pullback_entries.csv.",
+    "Exit variants are evaluated independently; no new signals are generated.",
+    "MFE/MAE use M1 highs/lows after entry.",
+    "Hour/year/month studies use baseline trade results and UTC/source timestamps.",
+    "Research outputs are not part of the final MT5 LIVE bot."
+  ]
+}

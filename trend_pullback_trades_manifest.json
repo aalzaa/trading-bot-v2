@@ -1,0 +1,25 @@
+{
+  "source": "trend_pullback_trades.csv",
+  "part_rows_limit": 5000,
+  "parts": [
+    {
+      "file": "trend_pullback_trades_part_001.csv",
+      "rows": 5000,
+      "first_trade_index": 0,
+      "last_trade_index": 4999
+    },
+    {
+      "file": "trend_pullback_trades_part_002.csv",
+      "rows": 5000,
+      "first_trade_index": 5000,
+      "last_trade_index": 9999
+    },
+    {
+      "file": "trend_pullback_trades_part_003.csv",
+      "rows": 885,
+      "first_trade_index": 10000,
+      "last_trade_index": 10884
+    }
+  ],
+  "total_rows": 10885
+}
