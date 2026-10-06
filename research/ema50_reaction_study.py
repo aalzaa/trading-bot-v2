@@ -117,6 +117,7 @@ def pattern_info(m5, ts, side):
     bar = m5.iloc[i]
     prev = m5.iloc[i - 1]
     ema20 = float(bar.EMA20)
+    ema20 = float(bar.EMA20)
     ema50 = float(bar.EMA50)
     rng = float(bar.High - bar.Low)
     body = abs(float(bar.Close - bar.Open))
@@ -142,7 +143,16 @@ def pattern_info(m5, ts, side):
         "ema50_setup": bool(pattern != "NONE" and touches and body_holds),
         "body_breaks_ema50": bool(body_breaks),
         "ema20": ema20,
+        "ema20": ema20,
         "ema50": ema50,
+        "distance_ema20": float(bar.Close - ema20),
+        "distance_ema50": float(bar.Close - ema50),
+        "distance_ema20_atr": float((bar.Close - ema20) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
+        "distance_ema50_atr": float((bar.Close - ema50) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
+        "abs_distance_ema20": float(abs(bar.Close - ema20)),
+        "abs_distance_ema50": float(abs(bar.Close - ema50)),
+        "abs_distance_ema20_atr": float(abs(bar.Close - ema20) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
+        "abs_distance_ema50_atr": float(abs(bar.Close - ema50) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
         "distance_ema20": float(bar.Close - ema20),
         "distance_ema50": float(bar.Close - ema50),
         "distance_ema20_atr": float((bar.Close - ema20) / bar.ATR14) if math.isfinite(float(bar.ATR14)) and float(bar.ATR14) > 0 else None,
@@ -309,6 +319,7 @@ def main():
     report = {
         "status": "PASS",
         "all_baseline_entries": len(context),
+        "distance_tracking": "EMA20 and EMA50 distance recorded for every entry in price units and ATR-normalized units, signed and absolute.",
         "distance_tracking": "For every EMA50 reaction entry, both EMA20 and EMA50 distance are recorded in price units and ATR-normalized units, signed and absolute.",
         "ema50_reaction_entries": len(eligible),
         "buffer_atr_grid": BUFFER_ATR_GRID,
