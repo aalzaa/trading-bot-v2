@@ -242,7 +242,9 @@ def main():
     report = {
         "status": "PASS",
         "entries_used": int(len(entries)),
-        "m1_rows": int(len(m1)),\n        "period_start": str(period_start),\n        "period_end": str(period_end),
+        "m1_rows": int(len(m1)),
+        "period_start": str(m1.index.min()),
+        "period_end": str(m1.index.max()),
         "exit_sweep_rows": int(len(sweep)),
         "best_exit_by_pf": sweep.iloc[0].to_dict(),
         "mfe_mean_r": float(mae.mfe_r_at_1atr.mean()),
