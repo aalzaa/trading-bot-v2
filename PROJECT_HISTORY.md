@@ -188,3 +188,13 @@ research/strategy_research.py was added. It evaluates exit variants from the fix
 The exit sweep is deliberately performed before selecting a time filter. Research outputs remain separate from the final MT5 LIVE code.
 
 Status: TESTS PREPARED — numerical results pending local execution against the master M1 dataset.
+
+
+## 2026-10-06 — Final research setup: EMA20/EMA50 distance + 3-year combined backtest
+- EMA50 reaction study updated to retain both EMA20 and EMA50 distance for every eligible entry.
+- Distances are recorded in price units and ATR-normalized units, signed and absolute.
+- Added distance buckets for EMA20 and EMA50 to study how entry quality changes with distance from both averages.
+- The EMA50 reaction study now uses the combined 3-year window 2023-09-30 through 2026-09-30.
+- Baseline trend-pullback backtest now uses the same combined 3-year window rather than a single rolling year.
+- Trade CSV output remains split into 5,000-trade parts for manageable upload/analysis, with a manifest.
+- Research-only changes do not modify the MT5 LIVE EA.
