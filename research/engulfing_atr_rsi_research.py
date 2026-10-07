@@ -457,7 +457,7 @@ def precompute_exit_grid(m1, entries):
         exit_idx, result_values, reasons = _exit_grid_kernel(
             entry_positions, sides, prices, atrs, highs, lows, sl_arr, rr_arr
         )
-        tmp = GRID_CACHE.with_name(GRID_CACHE.name + ".tmp")
+        tmp = GRID_CACHE.with_name(GRID_CACHE.name + ".tmp.npz")
         np.savez(tmp, cache_key=np.array(cache_key), exit_idx=exit_idx,
                  result_values=result_values, reasons=reasons)
         tmp.replace(GRID_CACHE)
