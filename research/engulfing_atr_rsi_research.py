@@ -139,79 +139,96 @@ def touches_zone(bar, ema20, ema50):
 
 def build_entries(m5):
     m5 = m5.copy()
-    m5["EMA20"] = m5.Close.ewm(span=20, adjust=False).mean()
-    m5["EMA50"] = m5.Close.ewm(span=50, adjust=False).mean()
-    m5["RSI14"] = rsi(m5.Close, RSI_PERIOD)
+    close = m5["Close"]
+    m5["EMA20"] = close.ewm(span=20, adjust=False).mean()
+    m5["EMA50"] = close.ewm(span=50, adjust=False).mean()
+    m5["RSI14"] = rsi(close, RSI_PERIOD)
 
-    rows = []
-    for i in range(max(50, PULLBACK_LOOKBACK + 3), len(m5)):
-        bar = m5.iloc[i]
-        prev = m5.iloc[i - 1]
-        if not math.isfinite(float(bar.ATR)) or bar.ATR <= 0:
-            continue
+    ema20 = m5["EMA20"].to_numpy(dtype=np.float64)
+    ema50 = m5["EMA50"].to_numpy(dtype=np.float64)
+    high = m5["High"].to_numpy(dtype=np.float64)
+    low = m5["Low"].to_numpy(dtype=np.float64)
+    op = m5["Open"].to_numpy(dtype=np.float64)
+    cl = close.to_numpy(dtype=np.float64)
+    atr = m5["ATR"].to_numpy(dtype=np.float64)
 
-        ema20 = float(bar.EMA20)
-        ema50 = float(bar.EMA50)
-        atr = float(bar.ATR)
+    long_bias = ema20 > ema50
+    short_bias = ema20 < ema50
+    zone_lo = np.minimum(ema20, ema50)
+    zone_hi = np.maximum(ema20, ema50)
+    touches = (high >= zone_lo) & (low <= zone_hi)
+    pull_long_bar = touches & (cl >= zone_lo)
+    pull_short_bar = touches & (cl <= zone_hi)
 
-        long_side = ema20 > ema50
-        short_side = ema20 < ema50
-        if not (long_side or short_side):
-            continue
+    prev_long = pd.Series(pull_long_bar, index=m5.index).shift(1).rolling(
+        PULLBACK_LOOKBACK, min_periods=1
+    ).max().to_numpy(dtype=bool)
+    prev_short = pd.Series(pull_short_bar, index=m5.index).shift(1).rolling(
+        PULLBACK_LOOKBACK, min_periods=1
+    ).max().to_numpy(dtype=bool)
 
-        # Pullback is required in the preceding closed candles, excluding signal candle.
-        recent = m5.iloc[max(0, i - PULLBACK_LOOKBACK):i]
-        had_pullback = False
-        for _, p in recent.iterrows():
-            p20 = float(p.EMA20)
-            p50 = float(p.EMA50)
-            if touches_zone(p, p20, p50):
-                if long_side and p.Close >= min(p20, p50):
-                    had_pullback = True
-                    break
-                if short_side and p.Close <= max(p20, p50):
-                    had_pullback = True
-                    break
-        if not had_pullback:
-            continue
+    prev_op = np.roll(op, 1)
+    prev_cl = np.roll(cl, 1)
+    prev_op[0] = np.nan
+    prev_cl[0] = np.nan
 
-        engulf = bullish_engulfing(bar, prev) if long_side else bearish_engulfing(bar, prev)
-        if not engulf:
-            continue
+    bullish = (cl > op) & (prev_cl < prev_op) & (op <= prev_cl) & (cl >= prev_op)
+    bearish = (cl < op) & (prev_cl > prev_op) & (op >= prev_cl) & (cl <= prev_op)
 
-        # Exclude signal candles that touch EMA50.
-        if bar.Low <= ema50 <= bar.High:
-            continue
-        ema50_reaction = False
+    valid = np.arange(len(m5)) >= max(50, PULLBACK_LOOKBACK + 3)
+    valid &= np.isfinite(atr) & (atr > 0)
 
-        side = "LONG" if long_side else "SHORT"
-        entry = float(bar.Close)
-        hour = int(bar.name.hour)
+    long_signal = valid & long_bias & prev_long & bullish
+    short_signal = valid & short_bias & prev_short & bearish
 
-        rows.append({
-            "entry_time": bar.name,
-            "side": side,
-            "entry": entry,
-            "atr": atr,
-            "ema20": ema20,
-            "ema50": ema50,
-            "distance_ema20": entry - ema20,
-            "distance_ema50": entry - ema50,
-            "abs_distance_ema20": abs(entry - ema20),
-            "abs_distance_ema50": abs(entry - ema50),
-            "distance_ema20_atr": (entry - ema20) / atr,
-            "distance_ema50_atr": (entry - ema50) / atr,
-            "abs_distance_ema20_atr": abs(entry - ema20) / atr,
-            "abs_distance_ema50_atr": abs(entry - ema50) / atr,
-            "rsi14": float(bar.RSI14) if pd.notna(bar.RSI14) else float("nan"),
-            "hour": hour,
-            "minute": int(bar.name.minute),
-            "session": session_for_hour(hour),
-            "pattern": "BULLISH_ENGULFING" if long_side else "BEARISH_ENGULFING",
-            "ema50_reaction": bool(ema50_reaction),
-        })
+    touches_ema50 = (low <= ema50) & (high >= ema50)
+    long_signal &= ~touches_ema50
+    short_signal &= ~touches_ema50
 
-    return pd.DataFrame(rows)
+    idx = np.flatnonzero(long_signal | short_signal)
+    columns = [
+        "entry_time", "side", "entry", "atr", "ema20", "ema50",
+        "distance_ema20", "distance_ema50", "abs_distance_ema20",
+        "abs_distance_ema50", "distance_ema20_atr", "distance_ema50_atr",
+        "abs_distance_ema20_atr", "abs_distance_ema50_atr", "rsi14",
+        "hour", "minute", "session", "pattern", "ema50_reaction"
+    ]
+    if len(idx) == 0:
+        return pd.DataFrame(columns=columns)
+
+    is_long = long_signal[idx]
+    times = m5.index.to_numpy()[idx]
+    entries = cl[idx]
+    atrs = atr[idx]
+    e20 = ema20[idx]
+    e50 = ema50[idx]
+    rsi_values = m5["RSI14"].to_numpy(dtype=np.float64)[idx]
+    dt = pd.DatetimeIndex(times)
+    hours = dt.hour.to_numpy(dtype=np.int16)
+    minutes = dt.minute.to_numpy(dtype=np.int16)
+
+    return pd.DataFrame({
+        "entry_time": times,
+        "side": np.where(is_long, "LONG", "SHORT"),
+        "entry": entries,
+        "atr": atrs,
+        "ema20": e20,
+        "ema50": e50,
+        "distance_ema20": entries - e20,
+        "distance_ema50": entries - e50,
+        "abs_distance_ema20": np.abs(entries - e20),
+        "abs_distance_ema50": np.abs(entries - e50),
+        "distance_ema20_atr": (entries - e20) / atrs,
+        "distance_ema50_atr": (entries - e50) / atrs,
+        "abs_distance_ema20_atr": np.abs(entries - e20) / atrs,
+        "abs_distance_ema50_atr": np.abs(entries - e50) / atrs,
+        "rsi14": rsi_values,
+        "hour": hours,
+        "minute": minutes,
+        "session": np.array([session_for_hour(int(h)) for h in hours], dtype=object),
+        "pattern": np.where(is_long, "BULLISH_ENGULFING", "BEARISH_ENGULFING"),
+        "ema50_reaction": np.zeros(len(idx), dtype=bool),
+    })
 
 
 def _exit_result_from_arrays(highs, lows, times, start_pos, side, price, atr, sl_atr, rr, entry_time):
