@@ -425,49 +425,79 @@ def precompute_exit_grid(m1, entries):
     prices = entries["entry"].to_numpy(dtype=np.float64)
     atrs = entries["atr"].to_numpy(dtype=np.float64)
 
-    exit_idx, result_values, reasons = _exit_grid_kernel(
-        entry_positions, sides, prices, atrs, highs, lows,
-        np.asarray(SL_GRID, dtype=np.float64),
-        np.asarray(RR_GRID, dtype=np.float64),
-    )
+    sl_arr = np.asarray(SL_GRID, dtype=np.float64)
+    rr_arr = np.asarray(RR_GRID, dtype=np.float64)
+
+    h = hashlib.sha256()
+    h.update(CACHE_VERSION.encode())
+    h.update(str(INPUT.stat().st_size).encode())
+    h.update(str(INPUT.stat().st_mtime_ns).encode())
+    h.update(str(START.value).encode())
+    h.update(str(END.value).encode())
+    h.update(sl_arr.tobytes())
+    h.update(rr_arr.tobytes())
+    h.update(entries["entry_time"].to_numpy(dtype="datetime64[ns]").tobytes())
+    h.update(entries["side"].map({"LONG": 1, "SHORT": -1}).to_numpy(dtype=np.int8).tobytes())
+    h.update(entries["entry"].to_numpy(dtype=np.float64).tobytes())
+    h.update(entries["atr"].to_numpy(dtype=np.float64).tobytes())
+    cache_key = h.hexdigest()
+
+    exit_idx = result_values = reasons = None
+    if GRID_CACHE.exists():
+        try:
+            cached = np.load(GRID_CACHE, allow_pickle=False)
+            if str(cached["cache_key"]) == cache_key:
+                exit_idx = cached["exit_idx"]
+                result_values = cached["result_values"]
+                reasons = cached["reasons"]
+        except Exception:
+            pass
+
+    if exit_idx is None:
+        exit_idx, result_values, reasons = _exit_grid_kernel(
+            entry_positions, sides, prices, atrs, highs, lows, sl_arr, rr_arr
+        )
+        tmp = GRID_CACHE.with_name(GRID_CACHE.name + ".tmp")
+        np.savez(tmp, cache_key=np.array(cache_key), exit_idx=exit_idx,
+                 result_values=result_values, reasons=reasons)
+        tmp.replace(GRID_CACHE)
 
     results = {(sl, rr): [] for sl in SL_GRID for rr in RR_GRID}
+    entry_times = entries["entry_time"].to_numpy()
+    side_values = entries["side"].to_numpy()
+    entry_values = entries["entry"].to_numpy(dtype=np.float64)
+    atr_values = entries["atr"].to_numpy(dtype=np.float64)
     n_rr = len(RR_GRID)
 
-    for i in range(len(entries)):
-        e = entries.iloc[i]
-        for si, sl in enumerate(SL_GRID):
-            for ri, rr in enumerate(RR_GRID):
-                c = si * n_rr + ri
-                j = int(exit_idx[i, c])
-                if j < 0:
-                    continue
-
-                if reasons[i, c] == 1:
-                    exit_price = (
-                        float(e.entry) - float(e.atr) * sl
-                        if e.side == "LONG"
-                        else float(e.entry) + float(e.atr) * sl
-                    )
-                    exit_reason = "SL"
-                else:
-                    exit_price = (
-                        float(e.entry) + float(e.atr) * sl * rr
-                        if e.side == "LONG"
-                        else float(e.entry) - float(e.atr) * sl * rr
-                    )
-                    exit_reason = "TP"
-
+    for si, sl in enumerate(SL_GRID):
+        for ri, rr in enumerate(RR_GRID):
+            c = si * n_rr + ri
+            valid = exit_idx[:, c] >= 0
+            if not np.any(valid):
+                continue
+            ii = np.flatnonzero(valid)
+            jj = exit_idx[ii, c]
+            hit_sl = reasons[ii, c] == 1
+            exit_prices = np.where(
+                hit_sl,
+                np.where(side_values[ii] == "LONG",
+                         entry_values[ii] - atr_values[ii] * sl,
+                         entry_values[ii] + atr_values[ii] * sl),
+                np.where(side_values[ii] == "LONG",
+                         entry_values[ii] + atr_values[ii] * sl * rr,
+                         entry_values[ii] - atr_values[ii] * sl * rr),
+            )
+            for k, i in enumerate(ii):
                 results[(sl, rr)].append({
-                    "entry_time": e.entry_time,
-                    "side": e.side,
-                    "entry": float(e.entry),
-                    "atr": float(e.atr),
-                    "exit_time": times[j],
+                    "entry_time": entry_times[i],
+                    "side": side_values[i],
+                    "entry": float(entry_values[i]),
+                    "atr": float(atr_values[i]),
+                    "exit_time": times[jj[k]],
                     "result_r": float(result_values[i, c]),
-                    "exit_reason": exit_reason,
-                    "exit_price": exit_price,
-                    "duration_m1": int((times[j] - e.entry_time) / np.timedelta64(1, "m")),
+                    "exit_reason": "SL" if hit_sl[k] else "TP",
+                    "exit_price": float(exit_prices[k]),
+                    "duration_m1": int((times[jj[k]] - entry_times[i]) / np.timedelta64(1, "m")),
                 })
 
     return results
