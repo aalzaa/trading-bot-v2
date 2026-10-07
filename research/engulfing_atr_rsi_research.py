@@ -20,6 +20,7 @@ Rules:
 from pathlib import Path
 import json
 import math
+import hashlib
 import numpy as np
 import pandas as pd
 
@@ -34,6 +35,8 @@ ROOT = Path(__file__).resolve().parents[1]
 INPUT = ROOT / "data" / "raw" / "XAUUSD_m1_20211001_20261001.csv"
 NEWS = ROOT / "data" / "news" / "xauusd_news.csv"
 RESULTS = ROOT / "results" / "engulfing_atr_rsi"
+GRID_CACHE = RESULTS / "engulfing_exit_grid_cache.npz"
+CACHE_VERSION = "exit-grid-v2"
 RESULTS.mkdir(parents=True, exist_ok=True)
 
 START = pd.Timestamp("2023-09-30 00:00:00")
@@ -394,10 +397,8 @@ def precompute_exit_grid(m1, entries):
     highs = m1["High"].to_numpy(dtype=np.float64)
     lows = m1["Low"].to_numpy(dtype=np.float64)
 
-    entry_positions = np.array(
-        [m1.index.searchsorted(t, side="right") for t in entries["entry_time"]],
-        dtype=np.int64,
-    )
+    entry_times = entries["entry_time"].to_numpy(dtype="datetime64[ns]")
+    entry_positions = np.searchsorted(times, entry_times, side="right").astype(np.int64)
     sides = np.array([1 if s == "LONG" else -1 for s in entries["side"]], dtype=np.int8)
     prices = entries["entry"].to_numpy(dtype=np.float64)
     atrs = entries["atr"].to_numpy(dtype=np.float64)
