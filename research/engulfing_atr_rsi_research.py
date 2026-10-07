@@ -20,7 +20,15 @@ Rules:
 from pathlib import Path
 import json
 import math
+import numpy as np
 import pandas as pd
+
+try:
+    from numba import njit
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
+    njit = None
 
 ROOT = Path(__file__).resolve().parents[1]
 INPUT = ROOT / "data" / "raw" / "XAUUSD_m1_20211001_20261001.csv"
@@ -242,22 +250,11 @@ def first_exit(m1, entry, sl_atr, rr):
     )
 
 
-def precompute_exit_grid(m1, entries):
-    """
-    Evaluate the complete SL/RR grid with ONE forward M1 scan per entry,
-    rather than rescanning M1 once for every SL/RR combination.
-
-    This changes only the implementation, not the trading rules:
-    - same entry timestamps
-    - same SL/TP formulas
-    - same M1 execution
-    - same first-hit rule
-    - same SL-over-TP tie handling on a candle.
-    """
+def _precompute_exit_grid_python(m1, entries):
+    """Pure-Python fallback with one forward M1 scan per entry."""
     times = m1.index.to_numpy()
     highs = m1["High"].to_numpy(dtype=float)
     lows = m1["Low"].to_numpy(dtype=float)
-
     combos = [(sl, rr) for sl in SL_GRID for rr in RR_GRID]
     results = {combo: [] for combo in combos}
 
@@ -276,24 +273,19 @@ def precompute_exit_grid(m1, entries):
         tp_values = {}
         for sl in SL_GRID:
             risk = atr * sl
-            if side == "LONG":
-                sl_values[sl] = price - risk
-                for rr in RR_GRID:
-                    tp_values[(sl, rr)] = price + risk * rr
-            else:
-                sl_values[sl] = price + risk
-                for rr in RR_GRID:
-                    tp_values[(sl, rr)] = price - risk * rr
+            sl_values[sl] = price - risk if side == "LONG" else price + risk
+            for rr in RR_GRID:
+                tp_values[(sl, rr)] = (
+                    price + risk * rr if side == "LONG"
+                    else price - risk * rr
+                )
 
         unresolved = set(combos)
         for j in range(pos, len(m1)):
             if not unresolved:
                 break
-
-            hi = highs[j]
-            lo = lows[j]
+            hi, lo = highs[j], lows[j]
             hit_now = []
-
             for combo in unresolved:
                 sl, rr = combo
                 if side == "LONG":
@@ -302,7 +294,6 @@ def precompute_exit_grid(m1, entries):
                 else:
                     hit_sl = hi >= sl_values[sl]
                     hit_tp = lo <= tp_values[combo]
-
                 if hit_sl or hit_tp:
                     if hit_sl:
                         result = (-1.0, "SL", sl_values[sl])
@@ -320,9 +311,141 @@ def precompute_exit_grid(m1, entries):
                         "duration_m1": int((times[j] - e.entry_time) / pd.Timedelta(minutes=1)),
                     })
                     hit_now.append(combo)
-
             for combo in hit_now:
                 unresolved.discard(combo)
+    return results
+
+
+if NUMBA_AVAILABLE:
+    @njit(cache=True)
+    def _exit_grid_kernel(entry_positions, sides, prices, atrs, highs, lows, sl_grid, rr_grid):
+        n = len(entry_positions)
+        n_sl = len(sl_grid)
+        n_rr = len(rr_grid)
+        n_combo = n_sl * n_rr
+
+        exit_indices = np.full((n, n_combo), -1, dtype=np.int64)
+        result_r = np.zeros((n, n_combo), dtype=np.float64)
+        reason = np.zeros((n, n_combo), dtype=np.int8)
+
+        for i in range(n):
+            pos = entry_positions[i]
+            if pos >= len(highs):
+                continue
+
+            unresolved = np.ones(n_combo, dtype=np.uint8)
+            remaining = n_combo
+            side = sides[i]
+            price = prices[i]
+            atr = atrs[i]
+
+            if not np.isfinite(atr) or atr <= 0.0:
+                continue
+
+            for j in range(pos, len(highs)):
+                if remaining == 0:
+                    break
+
+                hi = highs[j]
+                lo = lows[j]
+
+                for c in range(n_combo):
+                    if unresolved[c] == 0:
+                        continue
+
+                    si = c // n_rr
+                    ri = c - si * n_rr
+                    risk = atr * sl_grid[si]
+
+                    if side == 1:
+                        sl = price - risk
+                        tp = price + risk * rr_grid[ri]
+                        hit_sl = lo <= sl
+                        hit_tp = hi >= tp
+                    else:
+                        sl = price + risk
+                        tp = price - risk * rr_grid[ri]
+                        hit_sl = hi >= sl
+                        hit_tp = lo <= tp
+
+                    if hit_sl or hit_tp:
+                        unresolved[c] = 0
+                        remaining -= 1
+                        exit_indices[i, c] = j
+                        if hit_sl:
+                            result_r[i, c] = -1.0
+                            reason[i, c] = 1
+                        else:
+                            result_r[i, c] = rr_grid[ri]
+                            reason[i, c] = 2
+
+        return exit_indices, result_r, reason
+
+
+def precompute_exit_grid(m1, entries):
+    """Fast exit engine; JIT path with exact-rule Python fallback."""
+    if entries.empty:
+        return {(sl, rr): [] for sl in SL_GRID for rr in RR_GRID}
+
+    if not NUMBA_AVAILABLE:
+        return _precompute_exit_grid_python(m1, entries)
+
+    times = m1.index.to_numpy()
+    highs = m1["High"].to_numpy(dtype=np.float64)
+    lows = m1["Low"].to_numpy(dtype=np.float64)
+
+    entry_positions = np.array(
+        [m1.index.searchsorted(t, side="right") for t in entries["entry_time"]],
+        dtype=np.int64,
+    )
+    sides = np.array([1 if s == "LONG" else -1 for s in entries["side"]], dtype=np.int8)
+    prices = entries["entry"].to_numpy(dtype=np.float64)
+    atrs = entries["atr"].to_numpy(dtype=np.float64)
+
+    exit_idx, result_values, reasons = _exit_grid_kernel(
+        entry_positions, sides, prices, atrs, highs, lows,
+        np.asarray(SL_GRID, dtype=np.float64),
+        np.asarray(RR_GRID, dtype=np.float64),
+    )
+
+    results = {(sl, rr): [] for sl in SL_GRID for rr in RR_GRID}
+    n_rr = len(RR_GRID)
+
+    for i in range(len(entries)):
+        e = entries.iloc[i]
+        for si, sl in enumerate(SL_GRID):
+            for ri, rr in enumerate(RR_GRID):
+                c = si * n_rr + ri
+                j = int(exit_idx[i, c])
+                if j < 0:
+                    continue
+
+                if reasons[i, c] == 1:
+                    exit_price = (
+                        float(e.entry) - float(e.atr) * sl
+                        if e.side == "LONG"
+                        else float(e.entry) + float(e.atr) * sl
+                    )
+                    exit_reason = "SL"
+                else:
+                    exit_price = (
+                        float(e.entry) + float(e.atr) * sl * rr
+                        if e.side == "LONG"
+                        else float(e.entry) - float(e.atr) * sl * rr
+                    )
+                    exit_reason = "TP"
+
+                results[(sl, rr)].append({
+                    "entry_time": e.entry_time,
+                    "side": e.side,
+                    "entry": float(e.entry),
+                    "atr": float(e.atr),
+                    "exit_time": times[j],
+                    "result_r": float(result_values[i, c]),
+                    "exit_reason": exit_reason,
+                    "exit_price": exit_price,
+                    "duration_m1": int((times[j] - e.entry_time) / np.timedelta64(1, "m")),
+                })
 
     return results
 
@@ -482,11 +605,9 @@ def grouped_analysis(trades, column):
 def granular_analysis(m1, entries):
     base_rows = []
     best_rows = []
+    bmap = {x["entry_time"]: x for x in grid_results[(1.0, 1.5)]}
+    qmap = {x["entry_time"]: x for x in grid_results[(2.0, 3.0)]}
     for _, e in entries.iterrows():
-        b = grid_results[(1.0, 1.5)]
-        q = grid_results[(2.0, 3.0)]
-        bmap = {x["entry_time"]: x for x in b}
-        qmap = {x["entry_time"]: x for x in q}
         bx = bmap.get(e.entry_time)
         qx = qmap.get(e.entry_time)
         if bx is not None:
@@ -581,6 +702,9 @@ def main():
         "best_rr_by_pf": rr.iloc[0].to_dict() if not rr.empty else None,
         "news_data_available": news is not None,
         "rsi_threshold_applied": False,
+        "numba_acceleration": bool(NUMBA_AVAILABLE),
+        "sl_grid_atr": SL_GRID,
+        "rr_grid": RR_GRID,
         "entry_patterns": ["BULLISH_ENGULFING", "BEARISH_ENGULFING"],
         "rejection_used": False,
         "ema50_stop_used": False,
