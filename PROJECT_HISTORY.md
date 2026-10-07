@@ -239,6 +239,6 @@ Optimizations implemented:
 - Added deterministic on-disk caching of the numerical ATR/RR exit grid. The cache is invalidated when the dataset signature, period, entry ledger or grid parameters change.
 - No strategy filter, entry condition, SL/TP rule, same-candle convention, or research metric was intentionally changed by the optimization.
 
-Numba remains the preferred acceleration path, with the existing exact-rule Python fallback retained for environments where Numba is unavailable. Current Numba documentation confirms Python 3.14 support in modern releases. citeturn0search5turn0search3
+Numba remains the preferred acceleration path, with the existing exact-rule Python fallback retained for environments where Numba is unavailable. Current Numba documentation confirms Python 3.14 support in modern releases.
 
 Status: OPTIMIZED RESEARCH PIPELINE — pending local runtime/equivalence verification.
