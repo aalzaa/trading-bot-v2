@@ -32,7 +32,7 @@ START = pd.Timestamp("2023-09-30 00:00:00")
 END = pd.Timestamp("2026-09-30 23:59:59")
 
 # Keep a broad ATR grid and compare RR explicitly.
-SL_GRID = [0.50, 0.75, 1.00, 1.25, 1.50, 2.00]
+SL_GRID = [0.50, 0.75, 1.00, 1.25, 1.50, 2.00, 2.50, 3.00, 3.50, 4.00, 5.00]
 RR_GRID = [0.50, 0.75, 1.00, 1.25, 1.50, 2.00, 2.50, 3.00]
 
 RSI_PERIOD = 14
