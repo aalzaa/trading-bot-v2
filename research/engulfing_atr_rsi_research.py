@@ -8,7 +8,7 @@ Rules:
 - Pullback into EMA20-EMA50 zone over prior closed M5 bars.
 - ENTRY ONLY on bullish/bearish engulfing confirmation.
 - Rejection patterns are excluded.
-- An engulfing candle touching EMA50 is valid if its BODY does not cross EMA50.
+- Engulfings reacting on EMA50 are excluded.
 - No RSI threshold/filter is applied: RSI is recorded only.
 - Entry price is confirmation-candle close.
 - Entry timestamp/hour/session, LONG/SHORT, EMA distances and RSI are recorded.
@@ -163,14 +163,10 @@ def build_entries(m5):
         if not engulf:
             continue
 
-        # EMA50 reaction is valid too, provided the candle body does not cross EMA50.
-        ema50_reaction = (
-            bar.Low <= ema50 <= bar.High
-            and (
-                (long_side and bar.Open >= ema50 and bar.Close >= ema50)
-                or (short_side and bar.Open <= ema50 and bar.Close <= ema50)
-            )
-        )
+        # Exclude signal candles that touch EMA50.
+        if bar.Low <= ema50 <= bar.High:
+            continue
+        ema50_reaction = False
 
         side = "LONG" if long_side else "SHORT"
         entry = float(bar.Close)
@@ -386,6 +382,55 @@ def grouped_analysis(trades, column):
     return pd.DataFrame(rows)
 
 
+def granular_analysis(m1, entries):
+    base_rows = []
+    best_rows = []
+    for _, e in entries.iterrows():
+        b = first_exit(m1, e, 1.0, 1.5)
+        q = first_exit(m1, e, 2.0, 3.0)
+        if b is not None:
+            base_rows.append({**e.to_dict(), "result_r": b[1], "exit_time": b[0]})
+        if q is not None:
+            best_rows.append({**e.to_dict(), "result_r": q[1], "exit_time": q[0]})
+
+    bdf = pd.DataFrame(base_rows)
+    qdf = pd.DataFrame(best_rows)
+
+    def save_bins(df, col, bins, labels, filename):
+        if df.empty:
+            return
+        x = df.copy()
+        x["bin"] = pd.cut(x[col], bins=bins, labels=labels, include_lowest=True)
+        grouped_analysis(x, "bin").to_csv(RESULTS / filename, index=False)
+
+    if not bdf.empty:
+        save_bins(bdf, "rsi14", [-1,30,35,40,45,50,55,60,65,70,75,101],
+                  ["<30","30-35","35-40","40-45","45-50","50-55","55-60","60-65","65-70","70-75","75+"],
+                  "engulfing_granular_rsi.csv")
+        save_bins(bdf, "abs_distance_ema20_atr", [-1,0,.25,.5,.75,1,1.5,2,3,5,999],
+                  ["0-.25",".25-.5",".5-.75",".75-1","1-1.5","1.5-2","2-3","3-5","5+"],
+                  "engulfing_granular_ema20_distance.csv")
+        save_bins(bdf, "abs_distance_ema50_atr", [-1,0,.25,.5,.75,1,1.5,2,3,5,999],
+                  ["0-.25",".25-.5",".5-.75",".75-1","1-1.5","1.5-2","2-3","3-5","5+"],
+                  "engulfing_granular_ema50_distance.csv")
+        bdf["year"] = pd.to_datetime(bdf.entry_time).dt.year
+        bdf["rsi_bucket"] = pd.cut(bdf.rsi14, bins=[-1,30,40,50,60,70,101],
+                                   labels=["<30","30-40","40-50","50-60","60-70","70+"])
+        grouped_analysis(bdf, "year").to_csv(RESULTS / "engulfing_granular_year.csv", index=False)
+        grouped_analysis(bdf, "rsi_bucket").to_csv(RESULTS / "engulfing_granular_rsi_coarse.csv", index=False)
+        bdf.groupby(["year","rsi_bucket"], dropna=False).apply(lambda g: pd.Series(summarize(g))).reset_index().to_csv(
+            RESULTS / "engulfing_rsi_by_year.csv", index=False
+        )
+
+    if not qdf.empty:
+        qdf["year"] = pd.to_datetime(qdf.entry_time).dt.year
+        grouped_analysis(qdf, "year").to_csv(RESULTS / "engulfing_2atr_3r_by_year.csv", index=False)
+        grouped_analysis(qdf, "side").to_csv(RESULTS / "engulfing_2atr_3r_by_side.csv", index=False)
+        grouped_analysis(qdf, "session").to_csv(RESULTS / "engulfing_2atr_3r_by_session.csv", index=False)
+        qdf["rsi_bucket"] = pd.cut(qdf.rsi14, bins=[-1,30,40,50,60,70,101],
+                                   labels=["<30","30-40","40-50","50-60","60-70","70+"])
+        grouped_analysis(qdf, "rsi_bucket").to_csv(RESULTS / "engulfing_2atr_3r_by_rsi.csv", index=False)
+
 def main():
     m1 = load_m1()
     m5 = make_m5(m1)
@@ -413,6 +458,7 @@ def main():
     grouped_analysis(base, "hour").to_csv(RESULTS / "engulfing_by_hour.csv", index=False)
     grouped_analysis(base, "side").to_csv(RESULTS / "engulfing_by_side.csv", index=False)
     grouped_analysis(base, "ema50_reaction").to_csv(RESULTS / "engulfing_ema50_reaction.csv", index=False)
+    granular_analysis(m1, entries)
 
     news_cols = [c for c in entries.columns if "news" in c]
     if news_cols:
@@ -437,7 +483,7 @@ def main():
         "ema50_stop_used": False,
         "notes": [
             "Only engulfing confirmations are eligible.",
-            "EMA50 reaction engulfings are retained when the candle body does not cross EMA50.",
+            "Engulfings whose signal candle touches EMA50 are excluded completely.",
             "RSI14 is recorded per trade but no RSI entry threshold is applied.",
             "MFE/MAE are bounded by the baseline trade exit.",
             "RR/ATR variants use the exact same engulfing entry timestamps.",
