@@ -221,3 +221,24 @@ New research rules:
 
 Research output is separate from the MT5 LIVE bot.
 Status: NEW RESEARCH VERSION — pending local execution and analysis.
+
+
+## 2026-10-07 — Research optimization branch: full backtest/research acceleration
+
+Branch: engulfing-atr-rsi-research-optimized.
+
+The optimization branch was expanded beyond the ATR/RR exit engine so the full research pipeline is faster while preserving the same strategy rules and conservative execution conventions.
+
+Optimizations implemented:
+- Faster M1 loading using only required columns and avoiding unnecessary sorting/copies when the source is already ordered.
+- Vectorized M5 entry generation for EMA20/EMA50 bias, 3-bar pullback detection, Engulfing confirmation, ATR and RSI calculations.
+- EMA50-touch exclusion remains exactly active.
+- Vectorized historical-news tagging using sorted timestamp search rather than scanning the full news table for every trade.
+- Batch/JIT MFE/MAE calculation bounded by each trade's baseline exit, preserving the previous finite-window definition.
+- ATR/RR exit grid remains the authoritative backtest engine and is reused by all downstream analyses.
+- Added deterministic on-disk caching of the numerical ATR/RR exit grid. The cache is invalidated when the dataset signature, period, entry ledger or grid parameters change.
+- No strategy filter, entry condition, SL/TP rule, same-candle convention, or research metric was intentionally changed by the optimization.
+
+Numba remains the preferred acceleration path, with the existing exact-rule Python fallback retained for environments where Numba is unavailable. Current Numba documentation confirms Python 3.14 support in modern releases. citeturn0search5turn0search3
+
+Status: OPTIMIZED RESEARCH PIPELINE — pending local runtime/equivalence verification.
