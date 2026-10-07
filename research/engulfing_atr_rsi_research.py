@@ -66,13 +66,18 @@ def session_for_hour(hour):
 
 
 def load_m1():
-    df = pd.read_csv(INPUT)
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.set_index("Date").sort_index()
-    df = df[~df.index.duplicated(keep="first")]
+    df = pd.read_csv(
+        INPUT,
+        usecols=["Date", "Open", "High", "Low", "Close", "Volume"],
+        dtype={"Open": "float64", "High": "float64", "Low": "float64", "Close": "float64", "Volume": "float64"},
+        parse_dates=["Date"],
+    )
+    df = df.set_index("Date")
+    if not df.index.is_monotonic_increasing:
+        df = df.sort_index(kind="stable")
+    if df.index.has_duplicates:
+        df = df[~df.index.duplicated(keep="first")]
     df = df.loc[START:END]
-    for c in ["Open", "High", "Low", "Close", "Volume"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
     return df.dropna(subset=["Open", "High", "Low", "Close"])
 
 
