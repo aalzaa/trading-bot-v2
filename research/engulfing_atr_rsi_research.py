@@ -666,37 +666,44 @@ def tag_news(entries, news):
     ]
     for c in cols:
         out[c] = pd.NA
-    if news is None or news.empty:
+    if news is None or news.empty or out.empty:
         return out
 
     impact_col = next((c for c in ["Impact", "impact"] if c in news.columns), None)
     event_col = next((c for c in ["Event", "event", "Title", "title"] if c in news.columns), None)
+    news_times = news["news_time"].to_numpy(dtype="datetime64[ns]")
+    entry_times = out["entry_time"].to_numpy(dtype="datetime64[ns]")
+    n = len(news_times)
 
-    nt = news["news_time"].tolist()
-    for idx, row in out.iterrows():
-        t = row.entry_time
-        diffs = [abs((x - t).total_seconds()) / 60 for x in nt]
-        if not diffs:
-            continue
-        j = min(range(len(diffs)), key=diffs.__getitem__)
-        d = diffs[j]
-        out.at[idx, "nearest_news_time"] = nt[j]
-        out.at[idx, "nearest_news_minutes"] = d
-        if event_col:
-            out.at[idx, "nearest_news_event"] = news.iloc[j][event_col]
-        if impact_col:
-            out.at[idx, "nearest_news_impact"] = news.iloc[j][impact_col]
+    right = np.searchsorted(news_times, entry_times, side="left")
+    left = np.maximum(right - 1, 0)
+    right_clip = np.minimum(right, n - 1)
+    left_diff = np.abs(entry_times - news_times[left]).astype("timedelta64[s]").astype(np.float64)
+    right_diff = np.abs(entry_times - news_times[right_clip]).astype("timedelta64[s]").astype(np.float64)
+    use_right = right < n
+    choose_right = use_right & (right_diff < left_diff)
+    nearest_idx = np.where(choose_right, right_clip, left)
+    nearest_seconds = np.where(choose_right, right_diff, left_diff)
 
-        window = news.iloc[[k for k, x in enumerate(diffs) if x <= 120]]
-        for mins in [15, 30, 60, 120]:
-            out.at[idx, f"news_within_{mins}m"] = bool(any(x <= mins for x in diffs))
-            if impact_col:
-                impacts = window.loc[[diffs[k] <= mins for k in window.index]] if False else None
-                vals = []
-                for k, d2 in enumerate(diffs):
-                    if d2 <= mins:
-                        vals.append(str(news.iloc[k][impact_col]).upper())
-                out.at[idx, f"high_impact_within_{mins}m"] = any("HIGH" in v for v in vals)
+    out["nearest_news_time"] = news["news_time"].iloc[nearest_idx].to_numpy()
+    out["nearest_news_minutes"] = nearest_seconds / 60.0
+    if event_col:
+        out["nearest_news_event"] = news[event_col].iloc[nearest_idx].to_numpy()
+    if impact_col:
+        impact_values = news[impact_col].astype(str).str.upper().to_numpy()
+        out["nearest_news_impact"] = impact_values[nearest_idx]
+        high = np.fromiter(("HIGH" in v for v in impact_values), dtype=np.int8, count=n)
+        prefix = np.concatenate(([0], np.cumsum(high, dtype=np.int64)))
+    else:
+        prefix = None
+
+    for mins in [15, 30, 60, 120]:
+        delta = np.timedelta64(mins, "m")
+        lo = np.searchsorted(news_times, entry_times - delta, side="left")
+        hi = np.searchsorted(news_times, entry_times + delta, side="right")
+        out[f"news_within_{mins}m"] = hi > lo
+        if prefix is not None:
+            out[f"high_impact_within_{mins}m"] = (prefix[hi] - prefix[lo]) > 0
     return out
 
 
