@@ -1,0 +1,46 @@
+{
+  "status": "PASS",
+  "period_start": "2023-09-30 00:00:00",
+  "period_end": "2026-09-30 23:59:59",
+  "m1_rows": 1063252,
+  "m5_bars": 212698,
+  "entries": 7364,
+  "baseline": {
+    "trades": 7364,
+    "wins": 2276,
+    "losses": 5088,
+    "win_rate_pct": 30.90711569799022,
+    "total_r": -1674.0,
+    "avg_r": -0.22732210755024443,
+    "profit_factor": 0.6709905660377359
+  },
+  "rr_rows": 48,
+  "best_rr_by_pf": {
+    "trades": 7363.0,
+    "wins": 1875.0,
+    "losses": 5488.0,
+    "win_rate_pct": 25.465163656118428,
+    "total_r": 137.0,
+    "avg_r": 0.0186065462447372,
+    "profit_factor": 1.024963556851312,
+    "sl_atr": 2.0,
+    "rr": 3.0,
+    "tp_atr": 6.0
+  },
+  "news_data_available": false,
+  "rsi_threshold_applied": false,
+  "entry_patterns": [
+    "BULLISH_ENGULFING",
+    "BEARISH_ENGULFING"
+  ],
+  "rejection_used": false,
+  "ema50_stop_used": false,
+  "notes": [
+    "Only engulfing confirmations are eligible.",
+    "EMA50 reaction engulfings are retained when the candle body does not cross EMA50.",
+    "RSI14 is recorded per trade but no RSI entry threshold is applied.",
+    "MFE/MAE are bounded by the baseline trade exit.",
+    "RR/ATR variants use the exact same engulfing entry timestamps.",
+    "Research-only branch; not the final MT5 LIVE bot."
+  ]
+}
