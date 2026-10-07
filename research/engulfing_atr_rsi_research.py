@@ -530,7 +530,6 @@ def mfe_mae_bounded(m1, trade):
     after = m1.iloc[pos0:pos1]
     if after.empty:
         return None
-
     price = float(trade.entry)
     atr = float(trade.atr)
     if trade.side == "LONG":
@@ -539,26 +538,109 @@ def mfe_mae_bounded(m1, trade):
     else:
         favorable = price - after.Low
         adverse = after.High - price
-
     mfe_idx = favorable.idxmax()
     mae_idx = adverse.idxmax()
     mfe = max(0.0, float(favorable.max()))
     mae = max(0.0, float(adverse.max()))
-
     return {
-        "entry_time": trade.entry_time,
-        "exit_time": trade.exit_time,
-        "side": trade.side,
-        "entry": price,
-        "atr": atr,
-        "mfe_price": mfe,
-        "mae_price": mae,
+        "entry_time": trade.entry_time, "exit_time": trade.exit_time,
+        "side": trade.side, "entry": price, "atr": atr,
+        "mfe_price": mfe, "mae_price": mae,
         "mfe_r_at_1atr": mfe / atr if atr else float("nan"),
         "mae_r_at_1atr": mae / atr if atr else float("nan"),
         "time_to_mfe_m1": int((mfe_idx - trade.entry_time).total_seconds() / 60),
         "time_to_mae_m1": int((mae_idx - trade.entry_time).total_seconds() / 60),
         "result_r": trade.result_r,
     }
+
+
+if NUMBA_AVAILABLE:
+    @njit(cache=True)
+    def _mfe_mae_kernel(entry_pos, exit_pos, sides, prices, highs, lows):
+        n = len(entry_pos)
+        mfe = np.zeros(n, dtype=np.float64)
+        mae = np.zeros(n, dtype=np.float64)
+        mfe_idx = np.full(n, -1, dtype=np.int64)
+        mae_idx = np.full(n, -1, dtype=np.int64)
+        for i in range(n):
+            start = entry_pos[i]
+            end = exit_pos[i]
+            if start >= len(highs) or end < start:
+                continue
+            p = prices[i]
+            side = sides[i]
+            best_f = 0.0
+            best_a = 0.0
+            bf = -1
+            ba = -1
+            for j in range(start, end + 1):
+                if side == 1:
+                    fav = highs[j] - p
+                    adv = p - lows[j]
+                else:
+                    fav = p - lows[j]
+                    adv = highs[j] - p
+                if fav > best_f:
+                    best_f = fav
+                    bf = j
+                if adv > best_a:
+                    best_a = adv
+                    ba = j
+            mfe[i] = best_f
+            mae[i] = best_a
+            mfe_idx[i] = bf
+            mae_idx[i] = ba
+        return mfe, mae, mfe_idx, mae_idx
+
+
+def batch_mfe_mae(m1, trades):
+    if trades.empty:
+        return pd.DataFrame()
+    times = m1.index.to_numpy()
+    highs = m1["High"].to_numpy(dtype=np.float64)
+    lows = m1["Low"].to_numpy(dtype=np.float64)
+    entry_times = trades["entry_time"].to_numpy(dtype="datetime64[ns]")
+    exit_times = trades["exit_time"].to_numpy(dtype="datetime64[ns]")
+    entry_pos = np.searchsorted(times, entry_times, side="right").astype(np.int64)
+    exit_pos = (np.searchsorted(times, exit_times, side="right") - 1).astype(np.int64)
+    sides = trades["side"].map({"LONG": 1, "SHORT": -1}).to_numpy(dtype=np.int8)
+    prices = trades["entry"].to_numpy(dtype=np.float64)
+    atrs = trades["atr"].to_numpy(dtype=np.float64)
+
+    if NUMBA_AVAILABLE:
+        mfe, mae, mfe_idx, mae_idx = _mfe_mae_kernel(
+            entry_pos, exit_pos, sides, prices, highs, lows
+        )
+        safe_mfe_idx = np.maximum(mfe_idx, 0)
+        safe_mae_idx = np.maximum(mae_idx, 0)
+        time_to_mfe = (times[safe_mfe_idx] - entry_times) / np.timedelta64(1, "m")
+        time_to_mae = (times[safe_mae_idx] - entry_times) / np.timedelta64(1, "m")
+        time_to_mfe[mfe_idx < 0] = np.nan
+        time_to_mae[mae_idx < 0] = np.nan
+    else:
+        rows = []
+        for _, trade in trades.iterrows():
+            x = mfe_mae_bounded(m1, trade)
+            if x:
+                rows.append(x)
+        return pd.DataFrame(rows)
+
+    return pd.DataFrame({
+        "entry_time": trades["entry_time"].to_numpy(),
+        "exit_time": trades["exit_time"].to_numpy(),
+        "side": trades["side"].to_numpy(),
+        "entry": prices,
+        "atr": atrs,
+        "mfe_price": np.maximum(mfe, 0.0),
+        "mae_price": np.maximum(mae, 0.0),
+        "mfe_r_at_1atr": np.divide(np.maximum(mfe, 0.0), atrs,
+                                   out=np.full_like(mfe, np.nan), where=atrs != 0),
+        "mae_r_at_1atr": np.divide(np.maximum(mae, 0.0), atrs,
+                                   out=np.full_like(mae, np.nan), where=atrs != 0),
+        "time_to_mfe_m1": time_to_mfe,
+        "time_to_mae_m1": time_to_mae,
+        "result_r": trades["result_r"].to_numpy(dtype=np.float64),
+    })
 
 
 def load_news():
@@ -720,12 +802,7 @@ def main():
     base = baseline_trades_from_grid(entries, grid_results)
     base.to_csv(RESULTS / "engulfing_baseline_trades.csv", index=False)
 
-    mfe_rows = []
-    for _, trade in base.iterrows():
-        x = mfe_mae_bounded(m1, trade)
-        if x:
-            mfe_rows.append(x)
-    mfe = pd.DataFrame(mfe_rows)
+    mfe = batch_mfe_mae(m1, base)
     mfe.to_csv(RESULTS / "engulfing_mfe_mae.csv", index=False)
 
     rr = rr_sweep_from_grid(grid_results)
