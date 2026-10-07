@@ -602,7 +602,7 @@ def grouped_analysis(trades, column):
     return pd.DataFrame(rows)
 
 
-def granular_analysis(m1, entries):
+def granular_analysis(m1, entries, grid_results):
     base_rows = []
     best_rows = []
     bmap = {x["entry_time"]: x for x in grid_results[(1.0, 1.5)]}
@@ -682,7 +682,7 @@ def main():
     grouped_analysis(base, "hour").to_csv(RESULTS / "engulfing_by_hour.csv", index=False)
     grouped_analysis(base, "side").to_csv(RESULTS / "engulfing_by_side.csv", index=False)
     grouped_analysis(base, "ema50_reaction").to_csv(RESULTS / "engulfing_ema50_reaction.csv", index=False)
-    granular_analysis(m1, entries)
+    granular_analysis(m1, entries, grid_results)
 
     news_cols = [c for c in entries.columns if "news" in c]
     if news_cols:
