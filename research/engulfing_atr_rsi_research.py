@@ -198,10 +198,7 @@ def build_entries(m5):
     return pd.DataFrame(rows)
 
 
-def first_exit(m1, entry, sl_atr, rr):
-    side = entry.side
-    price = float(entry.entry)
-    atr = float(entry.atr)
+def _exit_result_from_arrays(highs, lows, times, start_pos, side, price, atr, sl_atr, rr, entry_time):
     risk = atr * sl_atr
     if risk <= 0 or not math.isfinite(risk):
         return None
@@ -213,33 +210,139 @@ def first_exit(m1, entry, sl_atr, rr):
         sl = price + risk
         tp = price - risk * rr
 
+    if side == "LONG":
+        sl_hits = lows[start_pos:] <= sl
+        tp_hits = highs[start_pos:] >= tp
+    else:
+        sl_hits = highs[start_pos:] >= sl
+        tp_hits = lows[start_pos:] <= tp
+
+    hit = sl_hits | tp_hits
+    if not hit.any():
+        return None
+
+    rel = int(hit.argmax())
+    pos = start_pos + rel
+    # Preserve the original same-candle convention: SL wins if SL and TP
+    # are both touched inside the same M1 candle.
+    if bool(sl_hits[rel]):
+        return times[pos], -1.0, "SL", sl, times[pos] - entry_time
+    return times[pos], rr, "TP", tp, times[pos] - entry_time
+
+
+def first_exit(m1, entry, sl_atr, rr):
+    # Compatibility helper for single-trade calls outside the optimized sweep.
+    times = m1.index.to_numpy()
+    highs = m1["High"].to_numpy(dtype=float)
+    lows = m1["Low"].to_numpy(dtype=float)
     pos = m1.index.searchsorted(entry.entry_time, side="right")
-    after = m1.iloc[pos:]
-    for ts, bar in after.iterrows():
-        hit_sl = bar.Low <= sl if side == "LONG" else bar.High >= sl
-        hit_tp = bar.High >= tp if side == "LONG" else bar.Low <= tp
-        if hit_sl or hit_tp:
-            if hit_sl:
-                return ts, -1.0, "SL", sl, ts - entry.entry_time
-            return ts, rr, "TP", tp, ts - entry.entry_time
-
-    return None
+    return _exit_result_from_arrays(
+        highs, lows, times, pos, entry.side, float(entry.entry),
+        float(entry.atr), sl_atr, rr, entry.entry_time
+    )
 
 
-def baseline_trades(m1, entries):
-    rows = []
+def precompute_exit_grid(m1, entries):
+    """
+    Evaluate the complete SL/RR grid with ONE forward M1 scan per entry,
+    rather than rescanning M1 once for every SL/RR combination.
+
+    This changes only the implementation, not the trading rules:
+    - same entry timestamps
+    - same SL/TP formulas
+    - same M1 execution
+    - same first-hit rule
+    - same SL-over-TP tie handling on a candle.
+    """
+    times = m1.index.to_numpy()
+    highs = m1["High"].to_numpy(dtype=float)
+    lows = m1["Low"].to_numpy(dtype=float)
+
+    combos = [(sl, rr) for sl in SL_GRID for rr in RR_GRID]
+    results = {combo: [] for combo in combos}
+
     for _, e in entries.iterrows():
-        x = first_exit(m1, e, 1.0, 1.5)
+        side = e.side
+        price = float(e.entry)
+        atr = float(e.atr)
+        if not math.isfinite(atr) or atr <= 0:
+            continue
+
+        pos = m1.index.searchsorted(e.entry_time, side="right")
+        if pos >= len(m1):
+            continue
+
+        sl_values = {}
+        tp_values = {}
+        for sl in SL_GRID:
+            risk = atr * sl
+            if side == "LONG":
+                sl_values[sl] = price - risk
+                for rr in RR_GRID:
+                    tp_values[(sl, rr)] = price + risk * rr
+            else:
+                sl_values[sl] = price + risk
+                for rr in RR_GRID:
+                    tp_values[(sl, rr)] = price - risk * rr
+
+        unresolved = set(combos)
+        for j in range(pos, len(m1)):
+            if not unresolved:
+                break
+
+            hi = highs[j]
+            lo = lows[j]
+            hit_now = []
+
+            for combo in unresolved:
+                sl, rr = combo
+                if side == "LONG":
+                    hit_sl = lo <= sl_values[sl]
+                    hit_tp = hi >= tp_values[combo]
+                else:
+                    hit_sl = hi >= sl_values[sl]
+                    hit_tp = lo <= tp_values[combo]
+
+                if hit_sl or hit_tp:
+                    if hit_sl:
+                        result = (-1.0, "SL", sl_values[sl])
+                    else:
+                        result = (rr, "TP", tp_values[combo])
+                    results[combo].append({
+                        "entry_time": e.entry_time,
+                        "side": side,
+                        "entry": price,
+                        "atr": atr,
+                        "exit_time": times[j],
+                        "result_r": result[0],
+                        "exit_reason": result[1],
+                        "exit_price": result[2],
+                        "duration_m1": int((times[j] - e.entry_time) / pd.Timedelta(minutes=1)),
+                    })
+                    hit_now.append(combo)
+
+            for combo in hit_now:
+                unresolved.discard(combo)
+
+    return results
+
+
+def baseline_trades_from_grid(entries, grid_results):
+    rows = []
+    baseline_key = (1.0, 1.5)
+    exits = grid_results[baseline_key]
+    by_time = {x["entry_time"]: x for x in exits}
+    for _, e in entries.iterrows():
+        x = by_time.get(e.entry_time)
         if x is None:
             continue
-        ts, result_r, reason, exit_price, duration = x
         row = e.to_dict()
         row.update({
-            "exit_time": ts,
-            "result_r": result_r,
-            "exit_reason": reason,
-            "exit_price": exit_price,
-            "duration_m1": int(duration.total_seconds() / 60),
+            "exit_time": x["exit_time"],
+            "result_r": x["result_r"],
+            "exit_reason": x["exit_reason"],
+            "exit_price": x["exit_price"],
+            "duration_m1": x["duration_m1"],
         })
         rows.append(row)
     return pd.DataFrame(rows)
@@ -356,17 +459,11 @@ def summarize(df):
     }
 
 
-def rr_sweep(m1, entries):
+def rr_sweep_from_grid(grid_results):
     rows = []
     for sl in SL_GRID:
         for rr in RR_GRID:
-            results = []
-            for _, e in entries.iterrows():
-                x = first_exit(m1, e, sl, rr)
-                if x is None:
-                    continue
-                ts, result_r, reason, exit_price, duration = x
-                results.append({"result_r": result_r, "exit_time": ts, "exit_reason": reason})
+            results = grid_results[(sl, rr)]
             s = summarize(pd.DataFrame(results))
             s.update({"sl_atr": sl, "rr": rr, "tp_atr": sl * rr})
             rows.append(s)
@@ -386,12 +483,16 @@ def granular_analysis(m1, entries):
     base_rows = []
     best_rows = []
     for _, e in entries.iterrows():
-        b = first_exit(m1, e, 1.0, 1.5)
-        q = first_exit(m1, e, 2.0, 3.0)
-        if b is not None:
-            base_rows.append({**e.to_dict(), "result_r": b[1], "exit_time": b[0]})
-        if q is not None:
-            best_rows.append({**e.to_dict(), "result_r": q[1], "exit_time": q[0]})
+        b = grid_results[(1.0, 1.5)]
+        q = grid_results[(2.0, 3.0)]
+        bmap = {x["entry_time"]: x for x in b}
+        qmap = {x["entry_time"]: x for x in q}
+        bx = bmap.get(e.entry_time)
+        qx = qmap.get(e.entry_time)
+        if bx is not None:
+            base_rows.append({**e.to_dict(), "result_r": bx["result_r"], "exit_time": bx["exit_time"]})
+        if qx is not None:
+            best_rows.append({**e.to_dict(), "result_r": qx["result_r"], "exit_time": qx["exit_time"]})
 
     bdf = pd.DataFrame(base_rows)
     qdf = pd.DataFrame(best_rows)
@@ -407,10 +508,10 @@ def granular_analysis(m1, entries):
         save_bins(bdf, "rsi14", [-1,30,35,40,45,50,55,60,65,70,75,101],
                   ["<30","30-35","35-40","40-45","45-50","50-55","55-60","60-65","65-70","70-75","75+"],
                   "engulfing_granular_rsi.csv")
-        save_bins(bdf, "abs_distance_ema20_atr", [-1,0,.25,.5,.75,1,1.5,2,3,5,999],
+        save_bins(bdf, "abs_distance_ema20_atr", [0,.25,.5,.75,1,1.5,2,3,5,999],
                   ["0-.25",".25-.5",".5-.75",".75-1","1-1.5","1.5-2","2-3","3-5","5+"],
                   "engulfing_granular_ema20_distance.csv")
-        save_bins(bdf, "abs_distance_ema50_atr", [-1,0,.25,.5,.75,1,1.5,2,3,5,999],
+        save_bins(bdf, "abs_distance_ema50_atr", [0,.25,.5,.75,1,1.5,2,3,5,999],
                   ["0-.25",".25-.5",".5-.75",".75-1","1-1.5","1.5-2","2-3","3-5","5+"],
                   "engulfing_granular_ema50_distance.csv")
         bdf["year"] = pd.to_datetime(bdf.entry_time).dt.year
@@ -440,7 +541,9 @@ def main():
 
     entries.to_csv(RESULTS / "engulfing_entries.csv", index=False)
 
-    base = baseline_trades(m1, entries)
+    # Compute the entire ATR/RR grid once. All later analyses reuse it.
+    grid_results = precompute_exit_grid(m1, entries)
+    base = baseline_trades_from_grid(entries, grid_results)
     base.to_csv(RESULTS / "engulfing_baseline_trades.csv", index=False)
 
     mfe_rows = []
@@ -451,7 +554,7 @@ def main():
     mfe = pd.DataFrame(mfe_rows)
     mfe.to_csv(RESULTS / "engulfing_mfe_mae.csv", index=False)
 
-    rr = rr_sweep(m1, entries)
+    rr = rr_sweep_from_grid(grid_results)
     rr.to_csv(RESULTS / "engulfing_rr_sweep.csv", index=False)
 
     grouped_analysis(base, "session").to_csv(RESULTS / "engulfing_by_session.csv", index=False)
