@@ -4,7 +4,7 @@
 //| Strategy: EMA20/EMA50 bias + pullback + engulfing on M5          |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.00"
+#property version   "1.01"
 
 #include <Trade/Trade.mqh>
 
@@ -22,7 +22,7 @@ enum ENUM_SESSION_MODE
 };
 
 input ENUM_SESSION_MODE InpSessionMode = SESSION_ALL; // Sessions
-input double            InpRiskPercent = 0.25;        // Risk % per trade
+input double            InpRiskPercent = 0.50;        // Risk % per trade
 input double            InpATRSL = 4.0;                // SL = ATR x
 input double            InpRR = 3.0;                   // Risk / Reward
 input string            InpExcludedHours = "2,7,11,19,20"; // Server hours to exclude
