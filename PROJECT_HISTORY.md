@@ -253,3 +253,21 @@ Status: OPTIMIZED RESEARCH PIPELINE — pending local runtime/equivalence verifi
 - Added `engulfing_rsi_by_atr_rr.csv` and `engulfing_hour_by_atr_rr.csv` for aggregate analysis without discarding raw trade-level information.
 - Optimization preserved: existing Numba exit grid/cache and vectorized/batched research pipeline are reused; no strategy rule outside the requested EMA-proximity filter was removed or simplified.
 - Research-only; not the final MT5 LIVE bot.
+
+
+## 2026-10-08 — Split full ATR/RR trade-level output for GitHub compatibility
+
+The research script no longer writes the monolithic `engulfing_all_atr_rr_trades.csv`.
+
+Instead:
+- Full trade-level data is written to `results/engulfing_atr_rsi/engulfing_all_atr_rr_trades/`.
+- Data is grouped by every SL/RR combination.
+- Each combination is automatically split into additional numbered parts if needed.
+- Each part is capped below 20 MB, leaving headroom under GitHub's 25 MB web-upload limit.
+- No columns or trade rows are intentionally discarded by the split.
+- The aggregate files `engulfing_rsi_by_atr_rr.csv` and `engulfing_hour_by_atr_rr.csv` remain unchanged.
+- The large numerical exit-grid cache remains a local-only acceleration artifact and is not required for final analysis.
+
+This change affects only result-file storage, not entry logic, ATR/RR calculations, RSI values, timestamps, sessions, exits, or any research metric.
+
+Status: RESEARCH OUTPUT STORAGE UPDATED — pending local runtime verification.
