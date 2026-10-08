@@ -437,6 +437,9 @@ def main():
         df=pd.DataFrame(grid_results[(sl,rr_value)])
         if df.empty: continue
         df=df.merge(entries,on=["entry_time","side","entry","atr"],how="left")
+        df["sl_atr"] = float(sl)
+        df["rr"] = float(rr_value)
+        df["tp_atr"] = float(sl * rr_value)
         grouped_frames.append(df)
     selected_trades=pd.concat(grouped_frames,ignore_index=True) if grouped_frames else pd.DataFrame()
     if not selected_trades.empty:
