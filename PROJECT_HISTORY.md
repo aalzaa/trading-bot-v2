@@ -242,3 +242,14 @@ Optimizations implemented:
 Numba remains the preferred acceleration path, with the existing exact-rule Python fallback retained for environments where Numba is unavailable. Current Numba documentation confirms Python 3.14 support in modern releases.
 
 Status: OPTIMIZED RESEARCH PIPELINE — pending local runtime/equivalence verification.
+
+
+## 2026-10-08 — EMA proximity + full ATR/RR RSI research
+- New research branch: `engulfing-ema-close-rsi-research`, based on the optimized research pipeline.
+- Entry rule tightened: confirmation candle close must be within **0.75 ATR of EMA20** AND **1.20 ATR of EMA50**.
+- Existing rules preserved: EMA20/EMA50 trend bias, 3-candle pullback, Engulfing only, rejection excluded, EMA50-touching signal candles excluded.
+- Full ATR/RR grid remains unchanged: SL 0.50–5.00 ATR and RR 0.50–3.00.
+- Every resolved ATR/RR trade now retains exact RSI14, hour, minute, session, side, EMA20/EMA50 distances and entry metadata in `engulfing_all_atr_rr_trades.csv`.
+- Added `engulfing_rsi_by_atr_rr.csv` and `engulfing_hour_by_atr_rr.csv` for aggregate analysis without discarding raw trade-level information.
+- Optimization preserved: existing Numba exit grid/cache and vectorized/batched research pipeline are reused; no strategy rule outside the requested EMA-proximity filter was removed or simplified.
+- Research-only; not the final MT5 LIVE bot.
