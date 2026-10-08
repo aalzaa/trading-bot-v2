@@ -9,7 +9,7 @@ Rules:
 - ENTRY ONLY on bullish/bearish engulfing confirmation.
 - Rejection patterns are excluded.
 - Engulfings reacting on EMA50 are excluded.
-- No RSI threshold/filter is applied: RSI is recorded only.
+- Directional RSI entry filter: LONG RSI 47-58 inclusive; SHORT RSI 42-51 inclusive.
 - Entry price is confirmation-candle close.
 - Entry timestamp/hour/session, LONG/SHORT, EMA distances and RSI are recorded.
 - Optional historical news CSV is tagged when present.
