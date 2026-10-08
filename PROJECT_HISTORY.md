@@ -271,3 +271,17 @@ Instead:
 This change affects only result-file storage, not entry logic, ATR/RR calculations, RSI values, timestamps, sessions, exits, or any research metric.
 
 Status: RESEARCH OUTPUT STORAGE UPDATED — pending local runtime verification.
+
+
+## 2026-10-08 — Directional RSI entry filter research
+- New research branch: `engulfing-rsi-filter-research`, based on `engulfing-ema-close-rsi-research`.
+- Added the requested RSI entry filter only; all other strategy rules remain unchanged.
+- LONG entries require RSI14 **47.0–58.0 inclusive**.
+- SHORT entries require RSI14 **42.0–51.0 inclusive**.
+- EMA20/EMA50 bias, 3-candle pullback, Engulfing-only confirmation, EMA50-touch exclusion, and EMA20/EMA50 proximity limits remain active.
+- Full SL 0.50–5.00 ATR × RR 0.50–3.00 grid remains unchanged.
+- Exit-grid cache version was incremented so the new filtered entry set cannot reuse the previous unfiltered cache.
+- The next analysis target is the **hour-of-day performance of the filtered strategy**, with LONG/SHORT and ATR/RR breakdowns where useful.
+- Research-only; this is not the final MT5 LIVE bot.
+
+Status: RSI FILTER TEST READY — pending local execution and hourly analysis.
