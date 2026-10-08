@@ -1,0 +1,74 @@
+{
+  "status": "PASS",
+  "period_start": "2023-09-30 00:00:00",
+  "period_end": "2026-09-30 23:59:59",
+  "m1_rows": 1063252,
+  "m5_bars": 212698,
+  "entries": 1287,
+  "baseline": {
+    "trades": 1287,
+    "wins": 484,
+    "losses": 803,
+    "win_rate_pct": 37.60683760683761,
+    "total_r": -77.0,
+    "avg_r": -0.05982905982905983,
+    "profit_factor": 0.9041095890410958
+  },
+  "rr_rows": 88,
+  "best_rr_by_pf": {
+    "trades": 1287.0,
+    "wins": 356.0,
+    "losses": 931.0,
+    "win_rate_pct": 27.66122766122766,
+    "total_r": 137.0,
+    "avg_r": 0.10644910644910645,
+    "profit_factor": 1.1471535982814178,
+    "sl_atr": 4.0,
+    "rr": 3.0,
+    "tp_atr": 12.0
+  },
+  "news_data_available": false,
+  "rsi_threshold_applied": false,
+  "numba_acceleration": true,
+  "sl_grid_atr": [
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+    3.5,
+    4.0,
+    5.0
+  ],
+  "rr_grid": [
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    2.0,
+    2.5,
+    3.0
+  ],
+  "entry_patterns": [
+    "BULLISH_ENGULFING",
+    "BEARISH_ENGULFING"
+  ],
+  "rejection_used": false,
+  "ema50_stop_used": false,
+  "ema20_proximity_max_atr": 0.75,
+  "ema50_proximity_max_atr": 1.2,
+  "notes": [
+    "Only engulfing confirmations are eligible.",
+    "Entry must be within 0.75 ATR of EMA20 and within 1.20 ATR of EMA50.",
+    "Every resolved ATR/RR trade retains exact RSI, hour, minute, session, side and EMA distances.",
+    "Engulfings whose signal candle touches EMA50 are excluded completely.",
+    "RSI14 is recorded per trade but no RSI entry threshold is applied.",
+    "MFE/MAE are bounded by the baseline trade exit.",
+    "RR/ATR variants use the exact same engulfing entry timestamps.",
+    "Research-only branch; not the final MT5 LIVE bot."
+  ]
+}
