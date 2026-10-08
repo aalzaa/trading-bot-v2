@@ -56,6 +56,8 @@ SELECTED_ATR_RR = [
 SL_GRID = sorted({sl for sl, _ in SELECTED_ATR_RR})
 RR_GRID = sorted({rr for _, rr in SELECTED_ATR_RR})
 SELECTED_COMBOS = set(SELECTED_ATR_RR)
+SELECTED_SL = np.asarray([sl for sl, _ in SELECTED_ATR_RR], dtype=np.float64)
+SELECTED_RR = np.asarray([rr for _, rr in SELECTED_ATR_RR], dtype=np.float64)
 
 RSI_PERIOD = 14
 PULLBACK_LOOKBACK = 3
@@ -183,7 +185,7 @@ def build_entries(m5):
 if NUMBA_AVAILABLE:
     @njit(cache=True)
     def _exit_grid_kernel(entry_positions,sides,prices,atrs,highs,lows,sl_grid,rr_grid):
-        n=len(entry_positions); n_sl=len(sl_grid); n_rr=len(rr_grid); n_combo=n_sl*n_rr
+        n=len(entry_positions); n_combo=len(sl_grid)
         exit_indices=np.full((n,n_combo),-1,dtype=np.int64)
         result_r=np.zeros((n,n_combo),dtype=np.float64)
         reason=np.zeros((n,n_combo),dtype=np.int8)
@@ -198,17 +200,17 @@ if NUMBA_AVAILABLE:
                 hi,lo=highs[j],lows[j]
                 for c in range(n_combo):
                     if unresolved[c]==0: continue
-                    si=c//n_rr; ri=c-si*n_rr; risk=atr*sl_grid[si]
+                    sl_value=sl_grid[c]; rr_value=rr_grid[c]; risk=atr*sl_value
                     if side==1:
-                        sl=price-risk; tp=price+risk*rr_grid[ri]
+                        sl=price-risk; tp=price+risk*rr_value
                         hit_sl,hit_tp=lo<=sl,hi>=tp
                     else:
-                        sl=price+risk; tp=price-risk*rr_grid[ri]
+                        sl=price+risk; tp=price-risk*rr_value
                         hit_sl,hit_tp=hi>=sl,lo<=tp
                     if hit_sl or hit_tp:
                         unresolved[c]=0; remaining-=1; exit_indices[i,c]=j
                         if hit_sl: result_r[i,c]=-1.0; reason[i,c]=1
-                        else: result_r[i,c]=rr_grid[ri]; reason[i,c]=2
+                        else: result_r[i,c]=rr_value; reason[i,c]=2
         return exit_indices,result_r,reason
 
 def _precompute_exit_grid_python(m1, entries):
@@ -245,7 +247,7 @@ def precompute_exit_grid(m1,entries):
     entry_positions=np.searchsorted(times,entry_times,side="right").astype(np.int64)
     sides=np.array([1 if s=="LONG" else -1 for s in entries["side"]],dtype=np.int8)
     prices=entries["entry"].to_numpy(dtype=np.float64); atrs=entries["atr"].to_numpy(dtype=np.float64)
-    sl_arr=np.asarray(SL_GRID,dtype=np.float64); rr_arr=np.asarray(RR_GRID,dtype=np.float64)
+    sl_arr=SELECTED_SL; rr_arr=SELECTED_RR
     h=hashlib.sha256()
     for x in [CACHE_VERSION,str(INPUT.stat().st_size),str(INPUT.stat().st_mtime_ns),str(START.value),str(END.value)]:
         h.update(x.encode())
@@ -269,11 +271,11 @@ def precompute_exit_grid(m1,entries):
             np.savez(tmp,cache_key=np.array(cache_key),exit_idx=exit_idx,result_values=result_values,reasons=reasons); tmp.replace(GRID_CACHE)
         else:
             return _precompute_exit_grid_python(m1,entries)
-    results={combo:[] for combo in SELECTED_ATR_RR}; n_rr=len(RR_GRID)
+    results={combo:[] for combo in SELECTED_ATR_RR}
     entry_times=entries["entry_time"].to_numpy(); side_values=entries["side"].to_numpy()
     entry_values=entries["entry"].to_numpy(dtype=np.float64); atr_values=entries["atr"].to_numpy(dtype=np.float64)
     for sl,rr in SELECTED_ATR_RR:
-        si=SL_GRID.index(sl); ri=RR_GRID.index(rr); c=si*n_rr+ri
+        c=SELECTED_ATR_RR.index((sl,rr))
         valid=exit_idx[:,c]>=0
         if not np.any(valid): continue
         ii=np.flatnonzero(valid); jj=exit_idx[ii,c]; hit_sl=reasons[ii,c]==1
