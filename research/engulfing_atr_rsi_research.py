@@ -759,7 +759,10 @@ def all_atr_rr_trade_records(entries, grid_results):
             rows = grid_results[(sl, rr)]
             if not rows:
                 continue
-            exits = pd.DataFrame(rows)[["entry_time", "side", "exit_time", "result_r", "exit_reason", "exit_price", "duration_m1"]]
+            exits = pd.DataFrame(rows)[
+                ["entry_time", "side", "exit_time", "result_r",
+                 "exit_reason", "exit_price", "duration_m1"]
+            ]
             merged = entry_df.merge(exits, on=["entry_time", "side"], how="inner")
             if merged.empty:
                 continue
@@ -768,6 +771,70 @@ def all_atr_rr_trade_records(entries, grid_results):
             merged["tp_atr"] = sl * rr
             frames.append(merged)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def save_all_atr_rr_parts(all_rr, output_dir, max_mb=20):
+    """Save the full ATR/RR trade dataset in GitHub-safe CSV parts.
+
+    Files are grouped by SL/RR first. If any group exceeds max_mb, it is
+    split into numbered parts. No rows or columns are dropped.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for old in output_dir.glob("*.csv"):
+        old.unlink()
+
+    if all_rr.empty:
+        return []
+
+    max_bytes = int(max_mb * 1024 * 1024)
+    written = []
+
+    for (sl, rr), group in all_rr.groupby(["sl_atr", "rr"], sort=True):
+        group = group.reset_index(drop=True)
+        prefix = f"sl{sl:.2f}_rr{rr:.2f}"
+
+        # Serialize once so the split is based on actual CSV byte size.
+        csv_text = group.to_csv(index=False)
+        if len(csv_text.encode("utf-8")) <= max_bytes:
+            path = output_dir / f"{prefix}.csv"
+            path.write_text(csv_text, encoding="utf-8")
+            written.append(path)
+            continue
+
+        # Oversized combinations are split by row count, preserving all data.
+        start = 0
+        part = 1
+        while start < len(group):
+            lo = start
+            hi = min(len(group), max(lo + 1, int(len(group) * 0.8)))
+            while hi < len(group):
+                candidate = group.iloc[lo:hi].to_csv(index=False)
+                if len(candidate.encode("utf-8")) <= max_bytes:
+                    next_hi = min(len(group), hi + max(1, (hi - lo) // 4))
+                    if next_hi == hi:
+                        break
+                    hi = next_hi
+                else:
+                    break
+
+            while hi > lo:
+                candidate = group.iloc[lo:hi].to_csv(index=False)
+                if len(candidate.encode("utf-8")) <= max_bytes:
+                    break
+                hi -= max(1, (hi - lo) // 10)
+
+            if hi <= lo:
+                raise RuntimeError(
+                    f"Unable to split {prefix}: a single row exceeds {max_mb} MB."
+                )
+
+            path = output_dir / f"{prefix}_part{part:02d}.csv"
+            path.write_text(candidate, encoding="utf-8")
+            written.append(path)
+            start = hi
+            part += 1
+
+    return written
 
 
 def granular_analysis(m1, entries, grid_results):
@@ -848,7 +915,10 @@ def main():
     granular_analysis(m1, entries, grid_results)
 
     all_rr = all_atr_rr_trade_records(entries, grid_results)
-    all_rr.to_csv(RESULTS / "engulfing_all_atr_rr_trades.csv", index=False)
+    all_rr_dir = RESULTS / "engulfing_all_atr_rr_trades"
+    all_rr_parts = save_all_atr_rr_parts(all_rr, all_rr_dir, max_mb=20)
+    # The old monolithic CSV is intentionally not generated: GitHub rejects
+    # large files and the split files retain every row and every column.
     if not all_rr.empty:
         all_rr.groupby(["sl_atr", "rr"], as_index=False).agg(
             trades=("result_r", "size"),
