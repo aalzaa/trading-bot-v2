@@ -36,7 +36,7 @@ INPUT = ROOT / "data" / "raw" / "XAUUSD_m1_20211001_20261001.csv"
 NEWS = ROOT / "data" / "news" / "xauusd_news.csv"
 RESULTS = ROOT / "results" / "engulfing_atr_rsi"
 GRID_CACHE = RESULTS / "engulfing_exit_grid_cache.npz"
-CACHE_VERSION = "exit-grid-v2"
+CACHE_VERSION = "exit-grid-v3-ema-close"
 RESULTS.mkdir(parents=True, exist_ok=True)
 
 START = pd.Timestamp("2023-09-30 00:00:00")
@@ -184,6 +184,12 @@ def build_entries(m5):
     touches_ema50 = (low <= ema50) & (high >= ema50)
     long_signal &= ~touches_ema50
     short_signal &= ~touches_ema50
+
+    abs_d20_atr = np.abs(cl - ema20) / atr
+    abs_d50_atr = np.abs(cl - ema50) / atr
+    proximity = (abs_d20_atr <= 0.75) & (abs_d50_atr <= 1.20)
+    long_signal &= proximity
+    short_signal &= proximity
 
     idx = np.flatnonzero(long_signal | short_signal)
     columns = [
@@ -744,6 +750,26 @@ def grouped_analysis(trades, column):
     return pd.DataFrame(rows)
 
 
+def all_atr_rr_trade_records(entries, grid_results):
+    """One row per resolved ATR/RR trade, retaining every entry feature."""
+    frames = []
+    entry_df = entries.reset_index(drop=True)
+    for sl in SL_GRID:
+        for rr in RR_GRID:
+            rows = grid_results[(sl, rr)]
+            if not rows:
+                continue
+            exits = pd.DataFrame(rows)[["entry_time", "side", "exit_time", "result_r", "exit_reason", "exit_price", "duration_m1"]]
+            merged = entry_df.merge(exits, on=["entry_time", "side"], how="inner")
+            if merged.empty:
+                continue
+            merged["sl_atr"] = sl
+            merged["rr"] = rr
+            merged["tp_atr"] = sl * rr
+            frames.append(merged)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
 def granular_analysis(m1, entries, grid_results):
     base_rows = []
     best_rows = []
@@ -821,6 +847,21 @@ def main():
     grouped_analysis(base, "ema50_reaction").to_csv(RESULTS / "engulfing_ema50_reaction.csv", index=False)
     granular_analysis(m1, entries, grid_results)
 
+    all_rr = all_atr_rr_trade_records(entries, grid_results)
+    all_rr.to_csv(RESULTS / "engulfing_all_atr_rr_trades.csv", index=False)
+    if not all_rr.empty:
+        all_rr.groupby(["sl_atr", "rr"], as_index=False).agg(
+            trades=("result_r", "size"),
+            rsi_mean=("rsi14", "mean"),
+            rsi_median=("rsi14", "median"),
+            rsi_min=("rsi14", "min"),
+            rsi_max=("rsi14", "max"),
+        ).to_csv(RESULTS / "engulfing_rsi_by_atr_rr.csv", index=False)
+        all_rr.groupby(["sl_atr", "rr", "hour"], as_index=False).agg(
+            trades=("result_r", "size"),
+            total_r=("result_r", "sum"),
+        ).to_csv(RESULTS / "engulfing_hour_by_atr_rr.csv", index=False)
+
     news_cols = [c for c in entries.columns if "news" in c]
     if news_cols:
         entries[["entry_time", "side", "rsi14"] + news_cols].to_csv(
@@ -845,8 +886,12 @@ def main():
         "entry_patterns": ["BULLISH_ENGULFING", "BEARISH_ENGULFING"],
         "rejection_used": False,
         "ema50_stop_used": False,
+        "ema20_proximity_max_atr": 0.75,
+        "ema50_proximity_max_atr": 1.20,
         "notes": [
             "Only engulfing confirmations are eligible.",
+            "Entry must be within 0.75 ATR of EMA20 and within 1.20 ATR of EMA50.",
+            "Every resolved ATR/RR trade retains exact RSI, hour, minute, session, side and EMA distances.",
             "Engulfings whose signal candle touches EMA50 are excluded completely.",
             "RSI14 is recorded per trade but no RSI entry threshold is applied.",
             "MFE/MAE are bounded by the baseline trade exit.",
