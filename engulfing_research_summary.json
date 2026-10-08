@@ -1,0 +1,89 @@
+{
+  "status": "PASS",
+  "period_start": "2023-09-30 00:00:00",
+  "period_end": "2026-09-30 23:59:59",
+  "m1_rows": 1063252,
+  "m5_bars": 212698,
+  "entries_after_hour_filter": 959,
+  "tested_combinations": [
+    {
+      "sl_atr": 4.0,
+      "rr": 3.0,
+      "tp_atr": 12.0
+    },
+    {
+      "sl_atr": 3.5,
+      "rr": 2.5,
+      "tp_atr": 8.75
+    },
+    {
+      "sl_atr": 4.0,
+      "rr": 2.5,
+      "tp_atr": 10.0
+    },
+    {
+      "sl_atr": 4.0,
+      "rr": 2.0,
+      "tp_atr": 8.0
+    },
+    {
+      "sl_atr": 5.0,
+      "rr": 1.5,
+      "tp_atr": 7.5
+    },
+    {
+      "sl_atr": 5.0,
+      "rr": 1.25,
+      "tp_atr": 6.25
+    },
+    {
+      "sl_atr": 3.5,
+      "rr": 3.0,
+      "tp_atr": 10.5
+    },
+    {
+      "sl_atr": 5.0,
+      "rr": 2.5,
+      "tp_atr": 12.5
+    },
+    {
+      "sl_atr": 5.0,
+      "rr": 2.0,
+      "tp_atr": 10.0
+    },
+    {
+      "sl_atr": 3.5,
+      "rr": 2.0,
+      "tp_atr": 7.0
+    }
+  ],
+  "results_rows": 10,
+  "news_data_available": false,
+  "rsi_filter": null,
+  "hour_filter": {
+    "blocked_hours": [
+      2,
+      7,
+      11,
+      19,
+      20
+    ]
+  },
+  "numba_acceleration": true,
+  "entry_rules": {
+    "ema20_ema50_bias": true,
+    "pullback_lookback": 3,
+    "engulfing_only": true,
+    "rejection_used": false,
+    "ema50_touch_excluded": true,
+    "ema20_proximity_max_atr": 0.75,
+    "ema50_proximity_max_atr": 1.2
+  },
+  "notes": [
+    "ONLY the 10 selected ATR/RR combinations are evaluated.",
+    "RSI14 is recorded only; no RSI entry filter is applied.",
+    "Entries at hours 02, 07, 11, 19 and 20 are excluded by the hour filter.",
+    "No 88-combination grid is computed.",
+    "Research-only branch; not MT5 LIVE code."
+  ]
+}
