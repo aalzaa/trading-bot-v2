@@ -36,7 +36,7 @@ INPUT = ROOT / "data" / "raw" / "XAUUSD_m1_20211001_20261001.csv"
 NEWS = ROOT / "data" / "news" / "xauusd_news.csv"
 RESULTS = ROOT / "results" / "engulfing_atr_rsi"
 GRID_CACHE = RESULTS / "engulfing_exit_grid_cache.npz"
-CACHE_VERSION = "exit-grid-v3-ema-close"
+CACHE_VERSION = "exit-grid-v4-rsi-filter"
 RESULTS.mkdir(parents=True, exist_ok=True)
 
 START = pd.Timestamp("2023-09-30 00:00:00")
@@ -190,6 +190,13 @@ def build_entries(m5):
     proximity = (abs_d20_atr <= 0.75) & (abs_d50_atr <= 1.20)
     long_signal &= proximity
     short_signal &= proximity
+
+    # Directional RSI entry filter: LONG 47-58, SHORT 42-51 inclusive.
+    rsi_values_all = m5["RSI14"].to_numpy(dtype=np.float64)
+    long_rsi_ok = (rsi_values_all >= 47.0) & (rsi_values_all <= 58.0)
+    short_rsi_ok = (rsi_values_all >= 42.0) & (rsi_values_all <= 51.0)
+    long_signal &= long_rsi_ok
+    short_signal &= short_rsi_ok
 
     idx = np.flatnonzero(long_signal | short_signal)
     columns = [
@@ -949,7 +956,9 @@ def main():
         "rr_rows": int(len(rr)),
         "best_rr_by_pf": rr.iloc[0].to_dict() if not rr.empty else None,
         "news_data_available": news is not None,
-        "rsi_threshold_applied": False,
+        "rsi_threshold_applied": True,
+        "long_rsi_filter": [47.0, 58.0],
+        "short_rsi_filter": [42.0, 51.0],
         "numba_acceleration": bool(NUMBA_AVAILABLE),
         "sl_grid_atr": SL_GRID,
         "rr_grid": RR_GRID,
@@ -963,7 +972,7 @@ def main():
             "Entry must be within 0.75 ATR of EMA20 and within 1.20 ATR of EMA50.",
             "Every resolved ATR/RR trade retains exact RSI, hour, minute, session, side and EMA distances.",
             "Engulfings whose signal candle touches EMA50 are excluded completely.",
-            "RSI14 is recorded per trade but no RSI entry threshold is applied.",
+            "RSI14 entry filter: LONG 47-58 inclusive; SHORT 42-51 inclusive.",
             "MFE/MAE are bounded by the baseline trade exit.",
             "RR/ATR variants use the exact same engulfing entry timestamps.",
             "Research-only branch; not the final MT5 LIVE bot.",
