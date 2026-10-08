@@ -297,3 +297,60 @@ Status: RSI FILTER TEST READY — pending local execution and hourly analysis.
 - Research-only; not the final MT5 LIVE bot.
 
 Status: HOUR FILTER TEST READY — pending local execution and robustness analysis.
+
+
+## 2026-10-08 — RSI filter evaluated and rejected
+
+The directional RSI entry filter was tested against the same 10 ATR/RR configurations.
+
+Tested filter:
+- LONG: RSI14 47.0–58.0
+- SHORT: RSI14 42.0–51.0
+
+Result:
+- Unfiltered strategy total: **+978.75R**
+- RSI-filtered strategy total: **+836.25R**
+- Entries with the tested research set: **1,163**
+- The RSI filter therefore removed profitable opportunities and reduced total performance.
+
+Decision: **REJECT RSI AS AN ENTRY FILTER.**
+
+RSI14 remains available as a recorded diagnostic/research variable, but it must not block entries in the current strategy.
+
+This confirms that the current BOT V2 research should continue without an RSI entry condition.
+
+## 2026-10-08 — Current research state and remaining work
+
+The current research version is based on:
+- XAUUSD M1 Dukascopy master dataset
+- M5 strategy timeframe
+- EMA20/EMA50 trend bias
+- 3-candle pullback
+- Engulfing-only confirmation
+- Rejection patterns excluded
+- EMA50-touching signal candles excluded
+- Confirmation close within 0.75 ATR of EMA20
+- Confirmation close within 1.20 ATR of EMA50
+- ATR/RR exit grid with the 10 selected configurations
+- RSI recorded for diagnostics only; **no RSI filter**
+- Hour filter under test: exclude 02:00, 07:00, 11:00, 19:00 and 20:00
+
+The following research items remain to be completed before selecting a final candidate:
+1. Execute and verify the new **hour-filter** backtest on all 10 configurations.
+2. Compare the hour-filtered results against the unfiltered results, including Total R, average R, Profit Factor, win rate and maximum drawdown.
+3. Check that the five excluded hours remain consistently weak across the 10 configurations rather than relying only on aggregate performance.
+4. Review LONG/SHORT performance after the hour filter.
+5. Review performance by session after the hour filter.
+6. Review trade count reduction and ensure the filter is not simply removing too much sample size.
+7. Check year/month/regime robustness of the hour filter.
+8. Re-check MFE/MAE and trade duration for the selected configurations.
+9. Identify the best configuration(s) without optimizing excessively to a single period.
+10. Run out-of-sample / walk-forward validation before promoting any configuration.
+11. Perform spread sensitivity and execution-cost checks.
+12. Perform historical-news/event analysis where the available dataset supports it.
+13. Validate the final candidate in MT5/demo execution.
+14. Only after robustness validation, decide whether the hour filter becomes part of the final LIVE strategy.
+
+Important research rule: no additional filter should be added merely because it sounds useful. Every modification must be supported by comparative results and robustness checks.
+
+Status: **RSI FILTER REJECTED — HOUR FILTER TEST IN PROGRESS.**
