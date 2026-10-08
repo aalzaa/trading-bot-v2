@@ -1,5 +1,4 @@
-"""
-Engulfing-only ATR/RR/RSI research for Trend + Pullback.
+"""Engulfing-only ATR/RR/RSI research for Trend + Pullback.
 
 Research branch only. Not MT5 LIVE code.
 
@@ -13,8 +12,7 @@ Rules:
 - Entry price is confirmation-candle close.
 - Entry timestamp/hour/session, LONG/SHORT, EMA distances and RSI are recorded.
 - Optional historical news CSV is tagged when present.
-- RR/ATR exit variants are evaluated from the exact same entries.
-- MFE/MAE are bounded by each trade's baseline exit, never the end of the dataset.
+- Only the 10 explicitly selected ATR/RR combinations are evaluated.
 """
 
 from pathlib import Path
@@ -36,15 +34,28 @@ INPUT = ROOT / "data" / "raw" / "XAUUSD_m1_20211001_20261001.csv"
 NEWS = ROOT / "data" / "news" / "xauusd_news.csv"
 RESULTS = ROOT / "results" / "engulfing_atr_rsi"
 GRID_CACHE = RESULTS / "engulfing_exit_grid_cache.npz"
-CACHE_VERSION = "exit-grid-v4-rsi-filter"
+CACHE_VERSION = "exit-grid-v5-rsi-filter-top10"
 RESULTS.mkdir(parents=True, exist_ok=True)
 
 START = pd.Timestamp("2023-09-30 00:00:00")
 END = pd.Timestamp("2026-09-30 23:59:59")
 
-# Keep a broad ATR grid and compare RR explicitly.
-SL_GRID = [0.50, 0.75, 1.00, 1.25, 1.50, 2.00, 2.50, 3.00, 3.50, 4.00, 5.00]
-RR_GRID = [0.50, 0.75, 1.00, 1.25, 1.50, 2.00, 2.50, 3.00]
+# ONLY the 10 combinations selected for the RSI-filter study.
+SELECTED_ATR_RR = [
+    (4.00, 3.00),
+    (3.50, 2.50),
+    (4.00, 2.50),
+    (4.00, 2.00),
+    (5.00, 1.50),
+    (5.00, 1.25),
+    (3.50, 3.00),
+    (5.00, 2.50),
+    (5.00, 2.00),
+    (3.50, 2.00),
+]
+SL_GRID = sorted({sl for sl, _ in SELECTED_ATR_RR})
+RR_GRID = sorted({rr for _, rr in SELECTED_ATR_RR})
+SELECTED_COMBOS = set(SELECTED_ATR_RR)
 
 RSI_PERIOD = 14
 PULLBACK_LOOKBACK = 3
@@ -57,85 +68,44 @@ SESSION_MAP = {
     "OFF": range(22, 24),
 }
 
-
 def session_for_hour(hour):
     for name, hours in SESSION_MAP.items():
         if hour in hours:
             return name
     return "UNKNOWN"
 
-
 def load_m1():
-    df = pd.read_csv(
-        INPUT,
-        usecols=["Date", "Open", "High", "Low", "Close", "Volume"],
-        dtype={"Open": "float64", "High": "float64", "Low": "float64", "Close": "float64", "Volume": "float64"},
-        parse_dates=["Date"],
-    )
-    df = df.set_index("Date")
+    df = pd.read_csv(INPUT, usecols=["Date","Open","High","Low","Close","Volume"],
+        dtype={"Open":"float64","High":"float64","Low":"float64","Close":"float64","Volume":"float64"},
+        parse_dates=["Date"]).set_index("Date")
     if not df.index.is_monotonic_increasing:
         df = df.sort_index(kind="stable")
     if df.index.has_duplicates:
         df = df[~df.index.duplicated(keep="first")]
-    df = df.loc[START:END]
-    return df.dropna(subset=["Open", "High", "Low", "Close"])
-
+    return df.loc[START:END].dropna(subset=["Open","High","Low","Close"])
 
 def make_m5(m1):
     m5 = m1.resample("5min", label="left", closed="left").agg(
-        Open=("Open", "first"),
-        High=("High", "max"),
-        Low=("Low", "min"),
-        Close=("Close", "last"),
-        Volume=("Volume", "sum"),
-        M1Count=("Close", "count"),
-    )
-    m5 = m5.dropna(subset=["Open", "High", "Low", "Close"])
-    tr = pd.concat([
-        m5["High"] - m5["Low"],
-        (m5["High"] - m5["Close"].shift()).abs(),
-        (m5["Low"] - m5["Close"].shift()).abs(),
-    ], axis=1).max(axis=1)
+        Open=("Open","first"), High=("High","max"), Low=("Low","min"),
+        Close=("Close","last"), Volume=("Volume","sum"), M1Count=("Close","count"))
+    m5 = m5.dropna(subset=["Open","High","Low","Close"])
+    tr = pd.concat([m5["High"]-m5["Low"],
+                    (m5["High"]-m5["Close"].shift()).abs(),
+                    (m5["Low"]-m5["Close"].shift()).abs()], axis=1).max(axis=1)
     m5["ATR"] = tr.rolling(14).mean()
     return m5
-
 
 def rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_gain = gain.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
     rs = avg_gain / avg_loss.replace(0, float("nan"))
     out = 100 - (100 / (1 + rs))
     out[(avg_loss == 0) & (avg_gain > 0)] = 100.0
     out[(avg_gain == 0) & (avg_loss > 0)] = 0.0
     return out
-
-
-def bullish_engulfing(bar, prev):
-    return (
-        bar.Close > bar.Open
-        and prev.Close < prev.Open
-        and bar.Open <= prev.Close
-        and bar.Close >= prev.Open
-    )
-
-
-def bearish_engulfing(bar, prev):
-    return (
-        bar.Close < bar.Open
-        and prev.Close > prev.Open
-        and bar.Open >= prev.Close
-        and bar.Close <= prev.Open
-    )
-
-
-def touches_zone(bar, ema20, ema50):
-    hi = max(ema20, ema50)
-    lo = min(ema20, ema50)
-    return bar.High >= lo and bar.Low <= hi
-
 
 def build_entries(m5):
     m5 = m5.copy()
@@ -152,32 +122,20 @@ def build_entries(m5):
     cl = close.to_numpy(dtype=np.float64)
     atr = m5["ATR"].to_numpy(dtype=np.float64)
 
-    long_bias = ema20 > ema50
-    short_bias = ema20 < ema50
-    zone_lo = np.minimum(ema20, ema50)
-    zone_hi = np.maximum(ema20, ema50)
+    long_bias, short_bias = ema20 > ema50, ema20 < ema50
+    zone_lo, zone_hi = np.minimum(ema20,ema50), np.maximum(ema20,ema50)
     touches = (high >= zone_lo) & (low <= zone_hi)
     pull_long_bar = touches & (cl >= zone_lo)
     pull_short_bar = touches & (cl <= zone_hi)
+    prev_long = pd.Series(pull_long_bar,index=m5.index).shift(1).rolling(PULLBACK_LOOKBACK,min_periods=1).max().to_numpy(dtype=bool)
+    prev_short = pd.Series(pull_short_bar,index=m5.index).shift(1).rolling(PULLBACK_LOOKBACK,min_periods=1).max().to_numpy(dtype=bool)
 
-    prev_long = pd.Series(pull_long_bar, index=m5.index).shift(1).rolling(
-        PULLBACK_LOOKBACK, min_periods=1
-    ).max().to_numpy(dtype=bool)
-    prev_short = pd.Series(pull_short_bar, index=m5.index).shift(1).rolling(
-        PULLBACK_LOOKBACK, min_periods=1
-    ).max().to_numpy(dtype=bool)
+    prev_op, prev_cl = np.roll(op,1), np.roll(cl,1)
+    prev_op[0], prev_cl[0] = np.nan, np.nan
+    bullish = (cl>op)&(prev_cl<prev_op)&(op<=prev_cl)&(cl>=prev_op)
+    bearish = (cl<op)&(prev_cl>prev_op)&(op>=prev_cl)&(cl<=prev_op)
 
-    prev_op = np.roll(op, 1)
-    prev_cl = np.roll(cl, 1)
-    prev_op[0] = np.nan
-    prev_cl[0] = np.nan
-
-    bullish = (cl > op) & (prev_cl < prev_op) & (op <= prev_cl) & (cl >= prev_op)
-    bearish = (cl < op) & (prev_cl > prev_op) & (op >= prev_cl) & (cl <= prev_op)
-
-    valid = np.arange(len(m5)) >= max(50, PULLBACK_LOOKBACK + 3)
-    valid &= np.isfinite(atr) & (atr > 0)
-
+    valid = (np.arange(len(m5)) >= max(50,PULLBACK_LOOKBACK+3)) & np.isfinite(atr) & (atr>0)
     long_signal = valid & long_bias & prev_long & bullish
     short_signal = valid & short_bias & prev_short & bearish
 
@@ -185,804 +143,330 @@ def build_entries(m5):
     long_signal &= ~touches_ema50
     short_signal &= ~touches_ema50
 
-    abs_d20_atr = np.abs(cl - ema20) / atr
-    abs_d50_atr = np.abs(cl - ema50) / atr
+    abs_d20_atr = np.abs(cl-ema20)/atr
+    abs_d50_atr = np.abs(cl-ema50)/atr
     proximity = (abs_d20_atr <= 0.75) & (abs_d50_atr <= 1.20)
     long_signal &= proximity
     short_signal &= proximity
 
-    # Directional RSI entry filter: LONG 47-58, SHORT 42-51 inclusive.
     rsi_values_all = m5["RSI14"].to_numpy(dtype=np.float64)
-    long_rsi_ok = (rsi_values_all >= 47.0) & (rsi_values_all <= 58.0)
-    short_rsi_ok = (rsi_values_all >= 42.0) & (rsi_values_all <= 51.0)
-    long_signal &= long_rsi_ok
-    short_signal &= short_rsi_ok
+    long_signal &= (rsi_values_all >= 47.0) & (rsi_values_all <= 58.0)
+    short_signal &= (rsi_values_all >= 42.0) & (rsi_values_all <= 51.0)
 
     idx = np.flatnonzero(long_signal | short_signal)
-    columns = [
-        "entry_time", "side", "entry", "atr", "ema20", "ema50",
-        "distance_ema20", "distance_ema50", "abs_distance_ema20",
-        "abs_distance_ema50", "distance_ema20_atr", "distance_ema50_atr",
-        "abs_distance_ema20_atr", "abs_distance_ema50_atr", "rsi14",
-        "hour", "minute", "session", "pattern", "ema50_reaction"
-    ]
-    if len(idx) == 0:
+    columns = ["entry_time","side","entry","atr","ema20","ema50","distance_ema20","distance_ema50",
+               "abs_distance_ema20","abs_distance_ema50","distance_ema20_atr","distance_ema50_atr",
+               "abs_distance_ema20_atr","abs_distance_ema50_atr","rsi14","hour","minute","session",
+               "pattern","ema50_reaction"]
+    if len(idx)==0:
         return pd.DataFrame(columns=columns)
 
     is_long = long_signal[idx]
     times = m5.index.to_numpy()[idx]
-    entries = cl[idx]
-    atrs = atr[idx]
-    e20 = ema20[idx]
-    e50 = ema50[idx]
-    rsi_values = m5["RSI14"].to_numpy(dtype=np.float64)[idx]
+    entries, atrs = cl[idx], atr[idx]
+    e20,e50 = ema20[idx],ema50[idx]
+    rsi_values = rsi_values_all[idx]
     dt = pd.DatetimeIndex(times)
-    hours = dt.hour.to_numpy(dtype=np.int16)
-    minutes = dt.minute.to_numpy(dtype=np.int16)
+    hours,minutes = dt.hour.to_numpy(dtype=np.int16),dt.minute.to_numpy(dtype=np.int16)
 
     return pd.DataFrame({
-        "entry_time": times,
-        "side": np.where(is_long, "LONG", "SHORT"),
-        "entry": entries,
-        "atr": atrs,
-        "ema20": e20,
-        "ema50": e50,
-        "distance_ema20": entries - e20,
-        "distance_ema50": entries - e50,
-        "abs_distance_ema20": np.abs(entries - e20),
-        "abs_distance_ema50": np.abs(entries - e50),
-        "distance_ema20_atr": (entries - e20) / atrs,
-        "distance_ema50_atr": (entries - e50) / atrs,
-        "abs_distance_ema20_atr": np.abs(entries - e20) / atrs,
-        "abs_distance_ema50_atr": np.abs(entries - e50) / atrs,
-        "rsi14": rsi_values,
-        "hour": hours,
-        "minute": minutes,
-        "session": np.array([session_for_hour(int(h)) for h in hours], dtype=object),
-        "pattern": np.where(is_long, "BULLISH_ENGULFING", "BEARISH_ENGULFING"),
-        "ema50_reaction": np.zeros(len(idx), dtype=bool),
-    })
+        "entry_time":times,"side":np.where(is_long,"LONG","SHORT"),"entry":entries,"atr":atrs,
+        "ema20":e20,"ema50":e50,"distance_ema20":entries-e20,"distance_ema50":entries-e50,
+        "abs_distance_ema20":np.abs(entries-e20),"abs_distance_ema50":np.abs(entries-e50),
+        "distance_ema20_atr":(entries-e20)/atrs,"distance_ema50_atr":(entries-e50)/atrs,
+        "abs_distance_ema20_atr":np.abs(entries-e20)/atrs,"abs_distance_ema50_atr":np.abs(entries-e50)/atrs,
+        "rsi14":rsi_values,"hour":hours,"minute":minutes,
+        "session":np.array([session_for_hour(int(h)) for h in hours],dtype=object),
+        "pattern":np.where(is_long,"BULLISH_ENGULFING","BEARISH_ENGULFING"),
+        "ema50_reaction":np.zeros(len(idx),dtype=bool)})
 
-
-def _exit_result_from_arrays(highs, lows, times, start_pos, side, price, atr, sl_atr, rr, entry_time):
-    risk = atr * sl_atr
-    if risk <= 0 or not math.isfinite(risk):
-        return None
-
-    if side == "LONG":
-        sl = price - risk
-        tp = price + risk * rr
-    else:
-        sl = price + risk
-        tp = price - risk * rr
-
-    if side == "LONG":
-        sl_hits = lows[start_pos:] <= sl
-        tp_hits = highs[start_pos:] >= tp
-    else:
-        sl_hits = highs[start_pos:] >= sl
-        tp_hits = lows[start_pos:] <= tp
-
-    hit = sl_hits | tp_hits
-    if not hit.any():
-        return None
-
-    rel = int(hit.argmax())
-    pos = start_pos + rel
-    # Preserve the original same-candle convention: SL wins if SL and TP
-    # are both touched inside the same M1 candle.
-    if bool(sl_hits[rel]):
-        return times[pos], -1.0, "SL", sl, times[pos] - entry_time
-    return times[pos], rr, "TP", tp, times[pos] - entry_time
-
-
-def first_exit(m1, entry, sl_atr, rr):
-    # Compatibility helper for single-trade calls outside the optimized sweep.
-    times = m1.index.to_numpy()
-    highs = m1["High"].to_numpy(dtype=float)
-    lows = m1["Low"].to_numpy(dtype=float)
-    pos = m1.index.searchsorted(entry.entry_time, side="right")
-    return _exit_result_from_arrays(
-        highs, lows, times, pos, entry.side, float(entry.entry),
-        float(entry.atr), sl_atr, rr, entry.entry_time
-    )
-
+if NUMBA_AVAILABLE:
+    @njit(cache=True)
+    def _exit_grid_kernel(entry_positions,sides,prices,atrs,highs,lows,sl_grid,rr_grid):
+        n=len(entry_positions); n_sl=len(sl_grid); n_rr=len(rr_grid); n_combo=n_sl*n_rr
+        exit_indices=np.full((n,n_combo),-1,dtype=np.int64)
+        result_r=np.zeros((n,n_combo),dtype=np.float64)
+        reason=np.zeros((n,n_combo),dtype=np.int8)
+        for i in range(n):
+            pos=entry_positions[i]
+            if pos>=len(highs): continue
+            unresolved=np.ones(n_combo,dtype=np.uint8); remaining=n_combo
+            side= sides[i]; price=prices[i]; atr=atrs[i]
+            if not np.isfinite(atr) or atr<=0: continue
+            for j in range(pos,len(highs)):
+                if remaining==0: break
+                hi,lo=highs[j],lows[j]
+                for c in range(n_combo):
+                    if unresolved[c]==0: continue
+                    si=c//n_rr; ri=c-si*n_rr; risk=atr*sl_grid[si]
+                    if side==1:
+                        sl=price-risk; tp=price+risk*rr_grid[ri]
+                        hit_sl,hit_tp=lo<=sl,hi>=tp
+                    else:
+                        sl=price+risk; tp=price-risk*rr_grid[ri]
+                        hit_sl,hit_tp=hi>=sl,lo<=tp
+                    if hit_sl or hit_tp:
+                        unresolved[c]=0; remaining-=1; exit_indices[i,c]=j
+                        if hit_sl: result_r[i,c]=-1.0; reason[i,c]=1
+                        else: result_r[i,c]=rr_grid[ri]; reason[i,c]=2
+        return exit_indices,result_r,reason
 
 def _precompute_exit_grid_python(m1, entries):
-    """Pure-Python fallback with one forward M1 scan per entry."""
-    times = m1.index.to_numpy()
-    highs = m1["High"].to_numpy(dtype=float)
-    lows = m1["Low"].to_numpy(dtype=float)
-    combos = [(sl, rr) for sl in SL_GRID for rr in RR_GRID]
-    results = {combo: [] for combo in combos}
-
-    for _, e in entries.iterrows():
-        side = e.side
-        price = float(e.entry)
-        atr = float(e.atr)
-        if not math.isfinite(atr) or atr <= 0:
-            continue
-
-        pos = m1.index.searchsorted(e.entry_time, side="right")
-        if pos >= len(m1):
-            continue
-
-        sl_values = {}
-        tp_values = {}
-        for sl in SL_GRID:
-            risk = atr * sl
-            sl_values[sl] = price - risk if side == "LONG" else price + risk
-            for rr in RR_GRID:
-                tp_values[(sl, rr)] = (
-                    price + risk * rr if side == "LONG"
-                    else price - risk * rr
-                )
-
-        unresolved = set(combos)
-        for j in range(pos, len(m1)):
-            if not unresolved:
-                break
-            hi, lo = highs[j], lows[j]
-            hit_now = []
-            for combo in unresolved:
-                sl, rr = combo
-                if side == "LONG":
-                    hit_sl = lo <= sl_values[sl]
-                    hit_tp = hi >= tp_values[combo]
-                else:
-                    hit_sl = hi >= sl_values[sl]
-                    hit_tp = lo <= tp_values[combo]
+    times=m1.index.to_numpy(); highs=m1["High"].to_numpy(dtype=float); lows=m1["Low"].to_numpy(dtype=float)
+    combos=SELECTED_ATR_RR; results={combo:[] for combo in combos}
+    for _,e in entries.iterrows():
+        pos=m1.index.searchsorted(e.entry_time,side="right")
+        if pos>=len(m1): continue
+        side=e.side; price=float(e.entry); atr=float(e.atr)
+        if not math.isfinite(atr) or atr<=0: continue
+        unresolved=set(combos)
+        for j in range(pos,len(m1)):
+            if not unresolved: break
+            hi,lo=highs[j],lows[j]; hit_now=[]
+            for sl,rr in unresolved:
+                risk=atr*sl
+                hit_sl=(lo<=price-risk) if side=="LONG" else (hi>=price+risk)
+                hit_tp=(hi>=price+risk*rr) if side=="LONG" else (lo<=price-risk*rr)
                 if hit_sl or hit_tp:
-                    if hit_sl:
-                        result = (-1.0, "SL", sl_values[sl])
-                    else:
-                        result = (rr, "TP", tp_values[combo])
-                    results[combo].append({
-                        "entry_time": e.entry_time,
-                        "side": side,
-                        "entry": price,
-                        "atr": atr,
-                        "exit_time": times[j],
-                        "result_r": result[0],
-                        "exit_reason": result[1],
-                        "exit_price": result[2],
-                        "duration_m1": int((times[j] - e.entry_time) / pd.Timedelta(minutes=1)),
-                    })
-                    hit_now.append(combo)
-            for combo in hit_now:
-                unresolved.discard(combo)
+                    results[(sl,rr)].append({"entry_time":e.entry_time,"side":side,"entry":price,"atr":atr,
+                        "exit_time":times[j],"result_r":-1.0 if hit_sl else rr,
+                        "exit_reason":"SL" if hit_sl else "TP",
+                        "exit_price":(price-risk if side=="LONG" else price+risk) if hit_sl else
+                                     (price+risk*rr if side=="LONG" else price-risk*rr),
+                        "duration_m1":int((times[j]-e.entry_time)/pd.Timedelta(minutes=1))})
+                    hit_now.append((sl,rr))
+            for combo in hit_now: unresolved.discard(combo)
     return results
 
-
-if NUMBA_AVAILABLE:
-    @njit(cache=True)
-    def _exit_grid_kernel(entry_positions, sides, prices, atrs, highs, lows, sl_grid, rr_grid):
-        n = len(entry_positions)
-        n_sl = len(sl_grid)
-        n_rr = len(rr_grid)
-        n_combo = n_sl * n_rr
-
-        exit_indices = np.full((n, n_combo), -1, dtype=np.int64)
-        result_r = np.zeros((n, n_combo), dtype=np.float64)
-        reason = np.zeros((n, n_combo), dtype=np.int8)
-
-        for i in range(n):
-            pos = entry_positions[i]
-            if pos >= len(highs):
-                continue
-
-            unresolved = np.ones(n_combo, dtype=np.uint8)
-            remaining = n_combo
-            side = sides[i]
-            price = prices[i]
-            atr = atrs[i]
-
-            if not np.isfinite(atr) or atr <= 0.0:
-                continue
-
-            for j in range(pos, len(highs)):
-                if remaining == 0:
-                    break
-
-                hi = highs[j]
-                lo = lows[j]
-
-                for c in range(n_combo):
-                    if unresolved[c] == 0:
-                        continue
-
-                    si = c // n_rr
-                    ri = c - si * n_rr
-                    risk = atr * sl_grid[si]
-
-                    if side == 1:
-                        sl = price - risk
-                        tp = price + risk * rr_grid[ri]
-                        hit_sl = lo <= sl
-                        hit_tp = hi >= tp
-                    else:
-                        sl = price + risk
-                        tp = price - risk * rr_grid[ri]
-                        hit_sl = hi >= sl
-                        hit_tp = lo <= tp
-
-                    if hit_sl or hit_tp:
-                        unresolved[c] = 0
-                        remaining -= 1
-                        exit_indices[i, c] = j
-                        if hit_sl:
-                            result_r[i, c] = -1.0
-                            reason[i, c] = 1
-                        else:
-                            result_r[i, c] = rr_grid[ri]
-                            reason[i, c] = 2
-
-        return exit_indices, result_r, reason
-
-
-def precompute_exit_grid(m1, entries):
-    """Fast exit engine; JIT path with exact-rule Python fallback."""
-    if entries.empty:
-        return {(sl, rr): [] for sl in SL_GRID for rr in RR_GRID}
-
-    if not NUMBA_AVAILABLE:
-        return _precompute_exit_grid_python(m1, entries)
-
-    times = m1.index.to_numpy()
-    highs = m1["High"].to_numpy(dtype=np.float64)
-    lows = m1["Low"].to_numpy(dtype=np.float64)
-
-    entry_times = entries["entry_time"].to_numpy(dtype="datetime64[ns]")
-    entry_positions = np.searchsorted(times, entry_times, side="right").astype(np.int64)
-    sides = np.array([1 if s == "LONG" else -1 for s in entries["side"]], dtype=np.int8)
-    prices = entries["entry"].to_numpy(dtype=np.float64)
-    atrs = entries["atr"].to_numpy(dtype=np.float64)
-
-    sl_arr = np.asarray(SL_GRID, dtype=np.float64)
-    rr_arr = np.asarray(RR_GRID, dtype=np.float64)
-
-    h = hashlib.sha256()
-    h.update(CACHE_VERSION.encode())
-    h.update(str(INPUT.stat().st_size).encode())
-    h.update(str(INPUT.stat().st_mtime_ns).encode())
-    h.update(str(START.value).encode())
-    h.update(str(END.value).encode())
-    h.update(sl_arr.tobytes())
-    h.update(rr_arr.tobytes())
+def precompute_exit_grid(m1,entries):
+    if entries.empty: return {combo:[] for combo in SELECTED_ATR_RR}
+    times=m1.index.to_numpy(); highs=m1["High"].to_numpy(dtype=np.float64); lows=m1["Low"].to_numpy(dtype=np.float64)
+    entry_times=entries["entry_time"].to_numpy(dtype="datetime64[ns]")
+    entry_positions=np.searchsorted(times,entry_times,side="right").astype(np.int64)
+    sides=np.array([1 if s=="LONG" else -1 for s in entries["side"]],dtype=np.int8)
+    prices=entries["entry"].to_numpy(dtype=np.float64); atrs=entries["atr"].to_numpy(dtype=np.float64)
+    sl_arr=np.asarray(SL_GRID,dtype=np.float64); rr_arr=np.asarray(RR_GRID,dtype=np.float64)
+    h=hashlib.sha256()
+    for x in [CACHE_VERSION,str(INPUT.stat().st_size),str(INPUT.stat().st_mtime_ns),str(START.value),str(END.value)]:
+        h.update(x.encode())
+    h.update(sl_arr.tobytes()); h.update(rr_arr.tobytes())
+    h.update(np.asarray(SELECTED_ATR_RR,dtype=np.float64).tobytes())
     h.update(entries["entry_time"].to_numpy(dtype="datetime64[ns]").tobytes())
-    h.update(entries["side"].map({"LONG": 1, "SHORT": -1}).to_numpy(dtype=np.int8).tobytes())
-    h.update(entries["entry"].to_numpy(dtype=np.float64).tobytes())
-    h.update(entries["atr"].to_numpy(dtype=np.float64).tobytes())
-    cache_key = h.hexdigest()
-
-    exit_idx = result_values = reasons = None
+    h.update(entries["side"].map({"LONG":1,"SHORT":-1}).to_numpy(dtype=np.int8).tobytes())
+    h.update(entries["entry"].to_numpy(dtype=np.float64).tobytes()); h.update(entries["atr"].to_numpy(dtype=np.float64).tobytes())
+    cache_key=h.hexdigest()
+    exit_idx=result_values=reasons=None
     if GRID_CACHE.exists():
         try:
-            cached = np.load(GRID_CACHE, allow_pickle=False)
-            if str(cached["cache_key"]) == cache_key:
-                exit_idx = cached["exit_idx"]
-                result_values = cached["result_values"]
-                reasons = cached["reasons"]
-        except Exception:
-            pass
-
+            cached=np.load(GRID_CACHE,allow_pickle=False)
+            if str(cached["cache_key"])==cache_key:
+                exit_idx,result_values,reasons=cached["exit_idx"],cached["result_values"],cached["reasons"]
+        except Exception: pass
     if exit_idx is None:
-        exit_idx, result_values, reasons = _exit_grid_kernel(
-            entry_positions, sides, prices, atrs, highs, lows, sl_arr, rr_arr
-        )
-        tmp = GRID_CACHE.with_name(GRID_CACHE.name + ".tmp.npz")
-        np.savez(tmp, cache_key=np.array(cache_key), exit_idx=exit_idx,
-                 result_values=result_values, reasons=reasons)
-        tmp.replace(GRID_CACHE)
-
-    results = {(sl, rr): [] for sl in SL_GRID for rr in RR_GRID}
-    entry_times = entries["entry_time"].to_numpy()
-    side_values = entries["side"].to_numpy()
-    entry_values = entries["entry"].to_numpy(dtype=np.float64)
-    atr_values = entries["atr"].to_numpy(dtype=np.float64)
-    n_rr = len(RR_GRID)
-
-    for si, sl in enumerate(SL_GRID):
-        for ri, rr in enumerate(RR_GRID):
-            c = si * n_rr + ri
-            valid = exit_idx[:, c] >= 0
-            if not np.any(valid):
-                continue
-            ii = np.flatnonzero(valid)
-            jj = exit_idx[ii, c]
-            hit_sl = reasons[ii, c] == 1
-            exit_prices = np.where(
-                hit_sl,
-                np.where(side_values[ii] == "LONG",
-                         entry_values[ii] - atr_values[ii] * sl,
-                         entry_values[ii] + atr_values[ii] * sl),
-                np.where(side_values[ii] == "LONG",
-                         entry_values[ii] + atr_values[ii] * sl * rr,
-                         entry_values[ii] - atr_values[ii] * sl * rr),
-            )
-            for k, i in enumerate(ii):
-                results[(sl, rr)].append({
-                    "entry_time": entry_times[i],
-                    "side": side_values[i],
-                    "entry": float(entry_values[i]),
-                    "atr": float(atr_values[i]),
-                    "exit_time": times[jj[k]],
-                    "result_r": float(result_values[i, c]),
-                    "exit_reason": "SL" if hit_sl[k] else "TP",
-                    "exit_price": float(exit_prices[k]),
-                    "duration_m1": int((times[jj[k]] - entry_times[i]) / np.timedelta64(1, "m")),
-                })
-
+        exit_idx,result_values,reasons=_exit_grid_kernel(entry_positions,sides,prices,atrs,highs,lows,sl_arr,rr_arr) if NUMBA_AVAILABLE else (None,None,None)
+        if NUMBA_AVAILABLE:
+            tmp=GRID_CACHE.with_name(GRID_CACHE.name+".tmp.npz")
+            np.savez(tmp,cache_key=np.array(cache_key),exit_idx=exit_idx,result_values=result_values,reasons=reasons); tmp.replace(GRID_CACHE)
+        else:
+            return _precompute_exit_grid_python(m1,entries)
+    results={combo:[] for combo in SELECTED_ATR_RR}; n_rr=len(RR_GRID)
+    entry_times=entries["entry_time"].to_numpy(); side_values=entries["side"].to_numpy()
+    entry_values=entries["entry"].to_numpy(dtype=np.float64); atr_values=entries["atr"].to_numpy(dtype=np.float64)
+    for sl,rr in SELECTED_ATR_RR:
+        si=SL_GRID.index(sl); ri=RR_GRID.index(rr); c=si*n_rr+ri
+        valid=exit_idx[:,c]>=0
+        if not np.any(valid): continue
+        ii=np.flatnonzero(valid); jj=exit_idx[ii,c]; hit_sl=reasons[ii,c]==1
+        exit_prices=np.where(hit_sl,
+            np.where(side_values[ii]=="LONG",entry_values[ii]-atr_values[ii]*sl,entry_values[ii]+atr_values[ii]*sl),
+            np.where(side_values[ii]=="LONG",entry_values[ii]+atr_values[ii]*sl*rr,entry_values[ii]-atr_values[ii]*sl*rr))
+        for k,i in enumerate(ii):
+            results[(sl,rr)].append({"entry_time":entry_times[i],"side":side_values[i],"entry":float(entry_values[i]),
+                "atr":float(atr_values[i]),"exit_time":times[jj[k]],"result_r":float(result_values[i,c]),
+                "exit_reason":"SL" if hit_sl[k] else "TP","exit_price":float(exit_prices[k]),
+                "duration_m1":int((times[jj[k]]-entry_times[i])/np.timedelta64(1,"m"))})
     return results
 
+def baseline_trades_from_grid(entries,grid_results):
+    # The old 1 ATR / 1.5 RR baseline is not part of this 10-combination study.
+    return pd.DataFrame()
 
-def baseline_trades_from_grid(entries, grid_results):
-    rows = []
-    baseline_key = (1.0, 1.5)
-    exits = grid_results[baseline_key]
-    by_time = {x["entry_time"]: x for x in exits}
-    for _, e in entries.iterrows():
-        x = by_time.get(e.entry_time)
-        if x is None:
-            continue
-        row = e.to_dict()
-        row.update({
-            "exit_time": x["exit_time"],
-            "result_r": x["result_r"],
-            "exit_reason": x["exit_reason"],
-            "exit_price": x["exit_price"],
-            "duration_m1": x["duration_m1"],
-        })
-        rows.append(row)
-    return pd.DataFrame(rows)
-
-
-def mfe_mae_bounded(m1, trade):
-    pos0 = m1.index.searchsorted(trade.entry_time, side="right")
-    pos1 = m1.index.searchsorted(trade.exit_time, side="right")
-    after = m1.iloc[pos0:pos1]
-    if after.empty:
-        return None
-    price = float(trade.entry)
-    atr = float(trade.atr)
-    if trade.side == "LONG":
-        favorable = after.High - price
-        adverse = price - after.Low
+def batch_mfe_mae(m1,trades):
+    if trades.empty: return pd.DataFrame()
+    times=m1.index.to_numpy(); highs=m1["High"].to_numpy(dtype=np.float64); lows=m1["Low"].to_numpy(dtype=np.float64)
+    entry_times=trades["entry_time"].to_numpy(dtype="datetime64[ns]"); exit_times=trades["exit_time"].to_numpy(dtype="datetime64[ns]")
+    entry_pos=np.searchsorted(times,entry_times,side="right").astype(np.int64)
+    exit_pos=(np.searchsorted(times,exit_times,side="right")-1).astype(np.int64)
+    sides=trades["side"].map({"LONG":1,"SHORT":-1}).to_numpy(dtype=np.int8); prices=trades["entry"].to_numpy(dtype=np.float64)
+    atrs=trades["atr"].to_numpy(dtype=np.float64)
+    if NUMBA_AVAILABLE:
+        mfe,mae,mfe_idx,mae_idx=_mfe_mae_kernel(entry_pos,exit_pos,sides,prices,highs,lows)
+        safe_mfe_idx=np.maximum(mfe_idx,0); safe_mae_idx=np.maximum(mae_idx,0)
+        time_to_mfe=(times[safe_mfe_idx]-entry_times)/np.timedelta64(1,"m")
+        time_to_mae=(times[safe_mae_idx]-entry_times)/np.timedelta64(1,"m")
+        time_to_mfe[mfe_idx<0]=np.nan; time_to_mae[mae_idx<0]=np.nan
     else:
-        favorable = price - after.Low
-        adverse = after.High - price
-    mfe_idx = favorable.idxmax()
-    mae_idx = adverse.idxmax()
-    mfe = max(0.0, float(favorable.max()))
-    mae = max(0.0, float(adverse.max()))
-    return {
-        "entry_time": trade.entry_time, "exit_time": trade.exit_time,
-        "side": trade.side, "entry": price, "atr": atr,
-        "mfe_price": mfe, "mae_price": mae,
-        "mfe_r_at_1atr": mfe / atr if atr else float("nan"),
-        "mae_r_at_1atr": mae / atr if atr else float("nan"),
-        "time_to_mfe_m1": int((mfe_idx - trade.entry_time).total_seconds() / 60),
-        "time_to_mae_m1": int((mae_idx - trade.entry_time).total_seconds() / 60),
-        "result_r": trade.result_r,
-    }
-
+        return pd.DataFrame()
+    return pd.DataFrame({"entry_time":trades["entry_time"].to_numpy(),"exit_time":trades["exit_time"].to_numpy(),
+        "side":trades["side"].to_numpy(),"entry":prices,"atr":atrs,"mfe_price":np.maximum(mfe,0.0),
+        "mae_price":np.maximum(mae,0.0),"mfe_r_at_1atr":np.divide(np.maximum(mfe,0.0),atrs,out=np.full_like(mfe,np.nan),where=atrs!=0),
+        "mae_r_at_1atr":np.divide(np.maximum(mae,0.0),atrs,out=np.full_like(mae,np.nan),where=atrs!=0),
+        "time_to_mfe_m1":time_to_mfe,"time_to_mae_m1":time_to_mae,"result_r":trades["result_r"].to_numpy(dtype=np.float64)})
 
 if NUMBA_AVAILABLE:
     @njit(cache=True)
-    def _mfe_mae_kernel(entry_pos, exit_pos, sides, prices, highs, lows):
-        n = len(entry_pos)
-        mfe = np.zeros(n, dtype=np.float64)
-        mae = np.zeros(n, dtype=np.float64)
-        mfe_idx = np.full(n, -1, dtype=np.int64)
-        mae_idx = np.full(n, -1, dtype=np.int64)
+    def _mfe_mae_kernel(entry_pos,exit_pos,sides,prices,highs,lows):
+        n=len(entry_pos); mfe=np.zeros(n); mae=np.zeros(n); mfe_idx=np.full(n,-1,dtype=np.int64); mae_idx=np.full(n,-1,dtype=np.int64)
         for i in range(n):
-            start = entry_pos[i]
-            end = exit_pos[i]
-            if start >= len(highs) or end < start:
-                continue
-            p = prices[i]
-            side = sides[i]
-            best_f = 0.0
-            best_a = 0.0
-            bf = -1
-            ba = -1
-            for j in range(start, end + 1):
-                if side == 1:
-                    fav = highs[j] - p
-                    adv = p - lows[j]
-                else:
-                    fav = p - lows[j]
-                    adv = highs[j] - p
-                if fav > best_f:
-                    best_f = fav
-                    bf = j
-                if adv > best_a:
-                    best_a = adv
-                    ba = j
-            mfe[i] = best_f
-            mae[i] = best_a
-            mfe_idx[i] = bf
-            mae_idx[i] = ba
-        return mfe, mae, mfe_idx, mae_idx
-
-
-def batch_mfe_mae(m1, trades):
-    if trades.empty:
-        return pd.DataFrame()
-    times = m1.index.to_numpy()
-    highs = m1["High"].to_numpy(dtype=np.float64)
-    lows = m1["Low"].to_numpy(dtype=np.float64)
-    entry_times = trades["entry_time"].to_numpy(dtype="datetime64[ns]")
-    exit_times = trades["exit_time"].to_numpy(dtype="datetime64[ns]")
-    entry_pos = np.searchsorted(times, entry_times, side="right").astype(np.int64)
-    exit_pos = (np.searchsorted(times, exit_times, side="right") - 1).astype(np.int64)
-    sides = trades["side"].map({"LONG": 1, "SHORT": -1}).to_numpy(dtype=np.int8)
-    prices = trades["entry"].to_numpy(dtype=np.float64)
-    atrs = trades["atr"].to_numpy(dtype=np.float64)
-
-    if NUMBA_AVAILABLE:
-        mfe, mae, mfe_idx, mae_idx = _mfe_mae_kernel(
-            entry_pos, exit_pos, sides, prices, highs, lows
-        )
-        safe_mfe_idx = np.maximum(mfe_idx, 0)
-        safe_mae_idx = np.maximum(mae_idx, 0)
-        time_to_mfe = (times[safe_mfe_idx] - entry_times) / np.timedelta64(1, "m")
-        time_to_mae = (times[safe_mae_idx] - entry_times) / np.timedelta64(1, "m")
-        time_to_mfe[mfe_idx < 0] = np.nan
-        time_to_mae[mae_idx < 0] = np.nan
-    else:
-        rows = []
-        for _, trade in trades.iterrows():
-            x = mfe_mae_bounded(m1, trade)
-            if x:
-                rows.append(x)
-        return pd.DataFrame(rows)
-
-    return pd.DataFrame({
-        "entry_time": trades["entry_time"].to_numpy(),
-        "exit_time": trades["exit_time"].to_numpy(),
-        "side": trades["side"].to_numpy(),
-        "entry": prices,
-        "atr": atrs,
-        "mfe_price": np.maximum(mfe, 0.0),
-        "mae_price": np.maximum(mae, 0.0),
-        "mfe_r_at_1atr": np.divide(np.maximum(mfe, 0.0), atrs,
-                                   out=np.full_like(mfe, np.nan), where=atrs != 0),
-        "mae_r_at_1atr": np.divide(np.maximum(mae, 0.0), atrs,
-                                   out=np.full_like(mae, np.nan), where=atrs != 0),
-        "time_to_mfe_m1": time_to_mfe,
-        "time_to_mae_m1": time_to_mae,
-        "result_r": trades["result_r"].to_numpy(dtype=np.float64),
-    })
-
+            start,end=entry_pos[i],exit_pos[i]
+            if start>=len(highs) or end<start: continue
+            p=prices[i]; side=sides[i]; best_f=0.0; best_a=0.0; bf=-1; ba=-1
+            for j in range(start,end+1):
+                fav=highs[j]-p if side==1 else p-lows[j]; adv=p-lows[j] if side==1 else highs[j]-p
+                if fav>best_f: best_f,bf=fav,j
+                if adv>best_a: best_a,ba=adv,j
+            mfe[i],mae[i],mfe_idx[i],mae_idx[i]=best_f,best_a,bf,ba
+        return mfe,mae,mfe_idx,mae_idx
 
 def load_news():
-    if not NEWS.exists():
-        return None
-    n = pd.read_csv(NEWS)
-    time_col = next((c for c in ["datetime", "DateTime", "timestamp", "time", "Date"] if c in n.columns), None)
-    if time_col is None:
-        return None
-    n["news_time"] = pd.to_datetime(n[time_col], errors="coerce")
-    n = n.dropna(subset=["news_time"]).sort_values("news_time")
-    return n
+    if not NEWS.exists(): return None
+    n=pd.read_csv(NEWS)
+    time_col=next((c for c in ["datetime","DateTime","timestamp","time","Date"] if c in n.columns),None)
+    if time_col is None: return None
+    n["news_time"]=pd.to_datetime(n[time_col],errors="coerce")
+    return n.dropna(subset=["news_time"]).sort_values("news_time")
 
-
-def tag_news(entries, news):
-    out = entries.copy()
-    cols = [
-        "nearest_news_time", "nearest_news_event", "nearest_news_impact",
-        "nearest_news_minutes", "news_within_15m", "news_within_30m",
-        "news_within_60m", "news_within_120m",
-        "high_impact_within_15m", "high_impact_within_30m",
-        "high_impact_within_60m", "high_impact_within_120m",
-    ]
-    for c in cols:
-        out[c] = pd.NA
-    if news is None or news.empty or out.empty:
-        return out
-
-    impact_col = next((c for c in ["Impact", "impact"] if c in news.columns), None)
-    event_col = next((c for c in ["Event", "event", "Title", "title"] if c in news.columns), None)
-    news_times = news["news_time"].to_numpy(dtype="datetime64[ns]")
-    entry_times = out["entry_time"].to_numpy(dtype="datetime64[ns]")
-    n = len(news_times)
-
-    right = np.searchsorted(news_times, entry_times, side="left")
-    left = np.maximum(right - 1, 0)
-    right_clip = np.minimum(right, n - 1)
-    left_diff = np.abs(entry_times - news_times[left]).astype("timedelta64[s]").astype(np.float64)
-    right_diff = np.abs(entry_times - news_times[right_clip]).astype("timedelta64[s]").astype(np.float64)
-    use_right = right < n
-    choose_right = use_right & (right_diff < left_diff)
-    nearest_idx = np.where(choose_right, right_clip, left)
-    nearest_seconds = np.where(choose_right, right_diff, left_diff)
-
-    out["nearest_news_time"] = news["news_time"].iloc[nearest_idx].to_numpy()
-    out["nearest_news_minutes"] = nearest_seconds / 60.0
-    if event_col:
-        out["nearest_news_event"] = news[event_col].iloc[nearest_idx].to_numpy()
+def tag_news(entries,news):
+    out=entries.copy()
+    cols=["nearest_news_time","nearest_news_event","nearest_news_impact","nearest_news_minutes",
+          "news_within_15m","news_within_30m","news_within_60m","news_within_120m",
+          "high_impact_within_15m","high_impact_within_30m","high_impact_within_60m","high_impact_within_120m"]
+    for c in cols: out[c]=pd.NA
+    if news is None or news.empty or out.empty: return out
+    impact_col=next((c for c in ["Impact","impact"] if c in news.columns),None)
+    event_col=next((c for c in ["Event","event","Title","title"] if c in news.columns),None)
+    nt=news["news_time"].to_numpy(dtype="datetime64[ns]"); et=out["entry_time"].to_numpy(dtype="datetime64[ns]"); n=len(nt)
+    right=np.searchsorted(nt,et,side="left"); left=np.maximum(right-1,0); rc=np.minimum(right,n-1)
+    ld=np.abs(et-nt[left]).astype("timedelta64[s]").astype(np.float64); rd=np.abs(et-nt[rc]).astype("timedelta64[s]").astype(np.float64)
+    cr=(right<n)&(rd<ld); ni=np.where(cr,rc,left); ns=np.where(cr,rd,ld)
+    out["nearest_news_time"]=news["news_time"].iloc[ni].to_numpy(); out["nearest_news_minutes"]=ns/60.0
+    if event_col: out["nearest_news_event"]=news[event_col].iloc[ni].to_numpy()
     if impact_col:
-        impact_values = news[impact_col].astype(str).str.upper().to_numpy()
-        out["nearest_news_impact"] = impact_values[nearest_idx]
-        high = np.fromiter(("HIGH" in v for v in impact_values), dtype=np.int8, count=n)
-        prefix = np.concatenate(([0], np.cumsum(high, dtype=np.int64)))
-    else:
-        prefix = None
-
-    for mins in [15, 30, 60, 120]:
-        delta = np.timedelta64(mins, "m")
-        lo = np.searchsorted(news_times, entry_times - delta, side="left")
-        hi = np.searchsorted(news_times, entry_times + delta, side="right")
-        out[f"news_within_{mins}m"] = hi > lo
-        if prefix is not None:
-            out[f"high_impact_within_{mins}m"] = (prefix[hi] - prefix[lo]) > 0
+        iv=news[impact_col].astype(str).str.upper().to_numpy(); out["nearest_news_impact"]=iv[ni]
+        high=np.fromiter(("HIGH" in v for v in iv),dtype=np.int8,count=n); prefix=np.concatenate(([0],np.cumsum(high,dtype=np.int64)))
+    else: prefix=None
+    for mins in [15,30,60,120]:
+        delta=np.timedelta64(mins,"m"); lo=np.searchsorted(nt,et-delta,side="left"); hi=np.searchsorted(nt,et+delta,side="right")
+        out[f"news_within_{mins}m"]=hi>lo
+        if prefix is not None: out[f"high_impact_within_{mins}m"]=(prefix[hi]-prefix[lo])>0
     return out
 
-
 def summarize(df):
-    if df.empty:
-        return {"trades": 0}
-    r = df.result_r.astype(float)
-    gp = r[r > 0].sum()
-    gl = abs(r[r < 0].sum())
-    return {
-        "trades": int(len(r)),
-        "wins": int((r > 0).sum()),
-        "losses": int((r < 0).sum()),
-        "win_rate_pct": float((r > 0).mean() * 100),
-        "total_r": float(r.sum()),
-        "avg_r": float(r.mean()),
-        "profit_factor": float(gp / gl) if gl else float("inf"),
-    }
-
+    if df.empty: return {"trades":0}
+    r=df.result_r.astype(float); gp=r[r>0].sum(); gl=abs(r[r<0].sum())
+    return {"trades":int(len(r)),"wins":int((r>0).sum()),"losses":int((r<0).sum()),
+            "win_rate_pct":float((r>0).mean()*100),"total_r":float(r.sum()),"avg_r":float(r.mean()),
+            "profit_factor":float(gp/gl) if gl else float("inf")}
 
 def rr_sweep_from_grid(grid_results):
-    rows = []
-    for sl in SL_GRID:
-        for rr in RR_GRID:
-            results = grid_results[(sl, rr)]
-            s = summarize(pd.DataFrame(results))
-            s.update({"sl_atr": sl, "rr": rr, "tp_atr": sl * rr})
-            rows.append(s)
-    return pd.DataFrame(rows).sort_values(["profit_factor", "total_r"], ascending=False)
+    rows=[]
+    for sl,rr in SELECTED_ATR_RR:
+        s=summarize(pd.DataFrame(grid_results[(sl,rr)])); s.update({"sl_atr":sl,"rr":rr,"tp_atr":sl*rr}); rows.append(s)
+    return pd.DataFrame(rows).sort_values(["profit_factor","total_r"],ascending=False)
 
-
-def grouped_analysis(trades, column):
-    rows = []
-    for value, g in trades.groupby(column, dropna=False):
-        s = summarize(g)
-        s[column] = value
-        rows.append(s)
+def grouped_analysis(trades,column):
+    rows=[]
+    for value,g in trades.groupby(column,dropna=False):
+        s=summarize(g); s[column]=value; rows.append(s)
     return pd.DataFrame(rows)
 
+def all_atr_rr_trade_records(entries,grid_results):
+    frames=[]; entry_df=entries.reset_index(drop=True)
+    for sl,rr in SELECTED_ATR_RR:
+        rows=grid_results[(sl,rr)]
+        if not rows: continue
+        exits=pd.DataFrame(rows)[["entry_time","side","exit_time","result_r","exit_reason","exit_price","duration_m1"]]
+        merged=entry_df.merge(exits,on=["entry_time","side"],how="inner")
+        if merged.empty: continue
+        merged["sl_atr"],merged["rr"],merged["tp_atr"]=sl,rr,sl*rr
+        frames.append(merged)
+    return pd.concat(frames,ignore_index=True) if frames else pd.DataFrame()
 
-def all_atr_rr_trade_records(entries, grid_results):
-    """One row per resolved ATR/RR trade, retaining every entry feature."""
-    frames = []
-    entry_df = entries.reset_index(drop=True)
-    for sl in SL_GRID:
-        for rr in RR_GRID:
-            rows = grid_results[(sl, rr)]
-            if not rows:
-                continue
-            exits = pd.DataFrame(rows)[
-                ["entry_time", "side", "exit_time", "result_r",
-                 "exit_reason", "exit_price", "duration_m1"]
-            ]
-            merged = entry_df.merge(exits, on=["entry_time", "side"], how="inner")
-            if merged.empty:
-                continue
-            merged["sl_atr"] = sl
-            merged["rr"] = rr
-            merged["tp_atr"] = sl * rr
-            frames.append(merged)
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-
-def save_all_atr_rr_parts(all_rr, output_dir, max_mb=20):
-    """Save the full ATR/RR trade dataset in GitHub-safe CSV parts.
-
-    Files are grouped by SL/RR first. If any group exceeds max_mb, it is
-    split into numbered parts. No rows or columns are dropped.
-    """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for old in output_dir.glob("*.csv"):
-        old.unlink()
-
-    if all_rr.empty:
-        return []
-
-    max_bytes = int(max_mb * 1024 * 1024)
-    written = []
-
-    for (sl, rr), group in all_rr.groupby(["sl_atr", "rr"], sort=True):
-        group = group.reset_index(drop=True)
-        prefix = f"sl{sl:.2f}_rr{rr:.2f}"
-
-        # Serialize once so the split is based on actual CSV byte size.
-        csv_text = group.to_csv(index=False)
-        if len(csv_text.encode("utf-8")) <= max_bytes:
-            path = output_dir / f"{prefix}.csv"
-            path.write_text(csv_text, encoding="utf-8")
-            written.append(path)
-            continue
-
-        # Oversized combinations are split by row count, preserving all data.
-        start = 0
-        part = 1
-        while start < len(group):
-            lo = start
-            hi = min(len(group), max(lo + 1, int(len(group) * 0.8)))
-            while hi < len(group):
-                candidate = group.iloc[lo:hi].to_csv(index=False)
-                if len(candidate.encode("utf-8")) <= max_bytes:
-                    next_hi = min(len(group), hi + max(1, (hi - lo) // 4))
-                    if next_hi == hi:
-                        break
-                    hi = next_hi
-                else:
-                    break
-
-            while hi > lo:
-                candidate = group.iloc[lo:hi].to_csv(index=False)
-                if len(candidate.encode("utf-8")) <= max_bytes:
-                    break
-                hi -= max(1, (hi - lo) // 10)
-
-            if hi <= lo:
-                raise RuntimeError(
-                    f"Unable to split {prefix}: a single row exceeds {max_mb} MB."
-                )
-
-            path = output_dir / f"{prefix}_part{part:02d}.csv"
-            path.write_text(candidate, encoding="utf-8")
-            written.append(path)
-            start = hi
-            part += 1
-
+def save_all_atr_rr_parts(all_rr,output_dir,max_mb=20):
+    output_dir.mkdir(parents=True,exist_ok=True)
+    for old in output_dir.glob("*.csv"): old.unlink()
+    if all_rr.empty: return []
+    max_bytes=int(max_mb*1024*1024); written=[]
+    for (sl,rr),group in all_rr.groupby(["sl_atr","rr"],sort=True):
+        group=group.reset_index(drop=True); prefix=f"sl{sl:.2f}_rr{rr:.2f}"
+        csv_text=group.to_csv(index=False)
+        if len(csv_text.encode("utf-8"))<=max_bytes:
+            path=output_dir/f"{prefix}.csv"; path.write_text(csv_text,encoding="utf-8"); written.append(path); continue
+        start=0; part=1
+        while start<len(group):
+            lo=start; hi=min(len(group),max(lo+1,int(len(group)*0.8)))
+            while hi<len(group):
+                candidate=group.iloc[lo:hi].to_csv(index=False)
+                if len(candidate.encode("utf-8"))<=max_bytes:
+                    next_hi=min(len(group),hi+max(1,(hi-lo)//4))
+                    if next_hi==hi: break
+                    hi=next_hi
+                else: break
+            while hi>lo:
+                candidate=group.iloc[lo:hi].to_csv(index=False)
+                if len(candidate.encode("utf-8"))<=max_bytes: break
+                hi-=max(1,(hi-lo)//10)
+            if hi<=lo: raise RuntimeError(f"Unable to split {prefix}: a single row exceeds {max_mb} MB.")
+            path=output_dir/f"{prefix}_part{part:02d}.csv"; path.write_text(candidate,encoding="utf-8"); written.append(path)
+            start=hi; part+=1
     return written
 
-
-def granular_analysis(m1, entries, grid_results):
-    base_rows = []
-    best_rows = []
-    bmap = {x["entry_time"]: x for x in grid_results[(1.0, 1.5)]}
-    qmap = {x["entry_time"]: x for x in grid_results[(2.0, 3.0)]}
-    for _, e in entries.iterrows():
-        bx = bmap.get(e.entry_time)
-        qx = qmap.get(e.entry_time)
-        if bx is not None:
-            base_rows.append({**e.to_dict(), "result_r": bx["result_r"], "exit_time": bx["exit_time"]})
-        if qx is not None:
-            best_rows.append({**e.to_dict(), "result_r": qx["result_r"], "exit_time": qx["exit_time"]})
-
-    bdf = pd.DataFrame(base_rows)
-    qdf = pd.DataFrame(best_rows)
-
-    def save_bins(df, col, bins, labels, filename):
-        if df.empty:
-            return
-        x = df.copy()
-        x["bin"] = pd.cut(x[col], bins=bins, labels=labels, include_lowest=True)
-        grouped_analysis(x, "bin").to_csv(RESULTS / filename, index=False)
-
-    if not bdf.empty:
-        save_bins(bdf, "rsi14", [-1,30,35,40,45,50,55,60,65,70,75,101],
-                  ["<30","30-35","35-40","40-45","45-50","50-55","55-60","60-65","65-70","70-75","75+"],
-                  "engulfing_granular_rsi.csv")
-        save_bins(bdf, "abs_distance_ema20_atr", [0,.25,.5,.75,1,1.5,2,3,5,999],
-                  ["0-.25",".25-.5",".5-.75",".75-1","1-1.5","1.5-2","2-3","3-5","5+"],
-                  "engulfing_granular_ema20_distance.csv")
-        save_bins(bdf, "abs_distance_ema50_atr", [0,.25,.5,.75,1,1.5,2,3,5,999],
-                  ["0-.25",".25-.5",".5-.75",".75-1","1-1.5","1.5-2","2-3","3-5","5+"],
-                  "engulfing_granular_ema50_distance.csv")
-        bdf["year"] = pd.to_datetime(bdf.entry_time).dt.year
-        bdf["rsi_bucket"] = pd.cut(bdf.rsi14, bins=[-1,30,40,50,60,70,101],
-                                   labels=["<30","30-40","40-50","50-60","60-70","70+"])
-        grouped_analysis(bdf, "year").to_csv(RESULTS / "engulfing_granular_year.csv", index=False)
-        grouped_analysis(bdf, "rsi_bucket").to_csv(RESULTS / "engulfing_granular_rsi_coarse.csv", index=False)
-        bdf.groupby(["year","rsi_bucket"], dropna=False).apply(lambda g: pd.Series(summarize(g))).reset_index().to_csv(
-            RESULTS / "engulfing_rsi_by_year.csv", index=False
-        )
-
-    if not qdf.empty:
-        qdf["year"] = pd.to_datetime(qdf.entry_time).dt.year
-        grouped_analysis(qdf, "year").to_csv(RESULTS / "engulfing_2atr_3r_by_year.csv", index=False)
-        grouped_analysis(qdf, "side").to_csv(RESULTS / "engulfing_2atr_3r_by_side.csv", index=False)
-        grouped_analysis(qdf, "session").to_csv(RESULTS / "engulfing_2atr_3r_by_session.csv", index=False)
-        qdf["rsi_bucket"] = pd.cut(qdf.rsi14, bins=[-1,30,40,50,60,70,101],
-                                   labels=["<30","30-40","40-50","50-60","60-70","70+"])
-        grouped_analysis(qdf, "rsi_bucket").to_csv(RESULTS / "engulfing_2atr_3r_by_rsi.csv", index=False)
-
 def main():
-    m1 = load_m1()
-    m5 = make_m5(m1)
-    entries = build_entries(m5)
-    news = load_news()
-    entries = tag_news(entries, news)
+    m1=load_m1(); m5=make_m5(m1); entries=tag_news(build_entries(m5),load_news())
+    entries.to_csv(RESULTS/"engulfing_entries.csv",index=False)
 
-    entries.to_csv(RESULTS / "engulfing_entries.csv", index=False)
+    grid_results=precompute_exit_grid(m1,entries)
+    rr=rr_sweep_from_grid(grid_results)
+    rr.to_csv(RESULTS/"engulfing_rr_sweep.csv",index=False)
 
-    # Compute the entire ATR/RR grid once. All later analyses reuse it.
-    grid_results = precompute_exit_grid(m1, entries)
-    base = baseline_trades_from_grid(entries, grid_results)
-    base.to_csv(RESULTS / "engulfing_baseline_trades.csv", index=False)
+    # Baseline is intentionally absent: this run is ONLY the 10 selected ATR/RR pairs.
+    grouped_frames=[]
+    for sl,rr_value in SELECTED_ATR_RR:
+        df=pd.DataFrame(grid_results[(sl,rr_value)])
+        if df.empty: continue
+        df=df.merge(entries,on=["entry_time","side","entry","atr"],how="left")
+        grouped_frames.append(df)
+    selected_trades=pd.concat(grouped_frames,ignore_index=True) if grouped_frames else pd.DataFrame()
+    if not selected_trades.empty:
+        selected_trades.to_csv(RESULTS/"engulfing_selected_10_trades.csv",index=False)
+        grouped_analysis(selected_trades,"side").to_csv(RESULTS/"selected_10_by_side.csv",index=False)
+        grouped_analysis(selected_trades,"hour").to_csv(RESULTS/"selected_10_by_hour.csv",index=False)
+        grouped_analysis(selected_trades,"session").to_csv(RESULTS/"selected_10_by_session.csv",index=False)
+        selected_trades.groupby(["sl_atr","rr","hour"],as_index=False).agg(
+            trades=("result_r","size"),total_r=("result_r","sum")
+        ).to_csv(RESULTS/"selected_10_hour_by_atr_rr.csv",index=False)
 
-    mfe = batch_mfe_mae(m1, base)
-    mfe.to_csv(RESULTS / "engulfing_mfe_mae.csv", index=False)
+    all_rr=all_atr_rr_trade_records(entries,grid_results)
+    save_all_atr_rr_parts(all_rr,RESULTS/"engulfing_all_atr_rr_trades",max_mb=20)
 
-    rr = rr_sweep_from_grid(grid_results)
-    rr.to_csv(RESULTS / "engulfing_rr_sweep.csv", index=False)
-
-    grouped_analysis(base, "session").to_csv(RESULTS / "engulfing_by_session.csv", index=False)
-    grouped_analysis(base, "hour").to_csv(RESULTS / "engulfing_by_hour.csv", index=False)
-    grouped_analysis(base, "side").to_csv(RESULTS / "engulfing_by_side.csv", index=False)
-    grouped_analysis(base, "ema50_reaction").to_csv(RESULTS / "engulfing_ema50_reaction.csv", index=False)
-    granular_analysis(m1, entries, grid_results)
-
-    all_rr = all_atr_rr_trade_records(entries, grid_results)
-    all_rr_dir = RESULTS / "engulfing_all_atr_rr_trades"
-    all_rr_parts = save_all_atr_rr_parts(all_rr, all_rr_dir, max_mb=20)
-    # The old monolithic CSV is intentionally not generated: GitHub rejects
-    # large files and the split files retain every row and every column.
-    if not all_rr.empty:
-        all_rr.groupby(["sl_atr", "rr"], as_index=False).agg(
-            trades=("result_r", "size"),
-            rsi_mean=("rsi14", "mean"),
-            rsi_median=("rsi14", "median"),
-            rsi_min=("rsi14", "min"),
-            rsi_max=("rsi14", "max"),
-        ).to_csv(RESULTS / "engulfing_rsi_by_atr_rr.csv", index=False)
-        all_rr.groupby(["sl_atr", "rr", "hour"], as_index=False).agg(
-            trades=("result_r", "size"),
-            total_r=("result_r", "sum"),
-        ).to_csv(RESULTS / "engulfing_hour_by_atr_rr.csv", index=False)
-
-    news_cols = [c for c in entries.columns if "news" in c]
-    if news_cols:
-        entries[["entry_time", "side", "rsi14"] + news_cols].to_csv(
-            RESULTS / "engulfing_news_context.csv", index=False
-        )
-
-    report = {
-        "status": "PASS",
-        "period_start": str(START),
-        "period_end": str(END),
-        "m1_rows": int(len(m1)),
-        "m5_bars": int(len(m5)),
-        "entries": int(len(entries)),
-        "baseline": summarize(base),
-        "rr_rows": int(len(rr)),
-        "best_rr_by_pf": rr.iloc[0].to_dict() if not rr.empty else None,
-        "news_data_available": news is not None,
-        "rsi_threshold_applied": True,
-        "long_rsi_filter": [47.0, 58.0],
-        "short_rsi_filter": [42.0, 51.0],
-        "numba_acceleration": bool(NUMBA_AVAILABLE),
-        "sl_grid_atr": SL_GRID,
-        "rr_grid": RR_GRID,
-        "entry_patterns": ["BULLISH_ENGULFING", "BEARISH_ENGULFING"],
-        "rejection_used": False,
-        "ema50_stop_used": False,
-        "ema20_proximity_max_atr": 0.75,
-        "ema50_proximity_max_atr": 1.20,
-        "notes": [
-            "Only engulfing confirmations are eligible.",
-            "Entry must be within 0.75 ATR of EMA20 and within 1.20 ATR of EMA50.",
-            "Every resolved ATR/RR trade retains exact RSI, hour, minute, session, side and EMA distances.",
-            "Engulfings whose signal candle touches EMA50 are excluded completely.",
-            "RSI14 entry filter: LONG 47-58 inclusive; SHORT 42-51 inclusive.",
-            "MFE/MAE are bounded by the baseline trade exit.",
-            "RR/ATR variants use the exact same engulfing entry timestamps.",
-            "Research-only branch; not the final MT5 LIVE bot.",
-        ],
+    report={
+        "status":"PASS","period_start":str(START),"period_end":str(END),
+        "m1_rows":int(len(m1)),"m5_bars":int(len(m5)),"entries_after_rsi_filter":int(len(entries)),
+        "tested_combinations":[{"sl_atr":sl,"rr":rr,"tp_atr":sl*rr} for sl,rr in SELECTED_ATR_RR],
+        "results_rows":int(len(rr)),"news_data_available":load_news() is not None,
+        "rsi_filter":{"LONG":[47.0,58.0],"SHORT":[42.0,51.0]},
+        "numba_acceleration":bool(NUMBA_AVAILABLE),
+        "entry_rules":{
+            "ema20_ema50_bias":True,"pullback_lookback":3,"engulfing_only":True,
+            "rejection_used":False,"ema50_touch_excluded":True,
+            "ema20_proximity_max_atr":0.75,"ema50_proximity_max_atr":1.20
+        },
+        "notes":["ONLY the 10 selected ATR/RR combinations are evaluated.",
+                 "RSI14 is an ENTRY filter: LONG 47-58 inclusive; SHORT 42-51 inclusive.",
+                 "No 88-combination grid is computed.","Research-only branch; not MT5 LIVE code."]
     }
-    (RESULTS / "engulfing_research_summary.json").write_text(
-        json.dumps(report, indent=2, default=str), encoding="utf-8"
-    )
-    print(json.dumps(report, indent=2, default=str))
+    (RESULTS/"engulfing_research_summary.json").write_text(json.dumps(report,indent=2,default=str),encoding="utf-8")
+    print(json.dumps(report,indent=2,default=str))
 
-
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
